@@ -40,5 +40,14 @@ jobs:
           actual = hashlib.sha256(source.encode("utf-8")).hexdigest()
           assert actual == expected, (actual, expected)
           compile(source, "Motech_Price_List_Manager.py", "exec")
+          print("=== MOQ DIAGNOSTIC ===")
+          lines = source.splitlines()
+          for i,line in enumerate(lines):
+              if "MOQ" in line:
+                  start=max(0,i-2); end=min(len(lines),i+3)
+                  print(f"--- lines {start+1}-{end} ---")
+                  for j in range(start,end):
+                      print(f"{j+1}: {lines[j]}")
+          print("=== END MOQ DIAGNOSTIC ===")
           print("Validation OK")
           PY
