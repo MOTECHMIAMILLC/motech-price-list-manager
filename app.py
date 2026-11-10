@@ -8,4 +8,34 @@ expected_sha256 = "836399f50ac828bd7f529ec3bc192b7df38e265490bab3ed2d51fa027f883
 actual_sha256 = hashlib.sha256(source.encode("utf-8")).hexdigest()
 if actual_sha256 != expected_sha256:
     raise RuntimeError("Application payload integrity check failed.")
+
+# Hotfix: do not create review items for invalid alternate offers when the same
+# product already has an eligible offer. This keeps "Revisión requerida"
+# focused on issues that can actually block publication.
+_old = '''    bad=offers[~offers["Elegible"]].copy()
+    for _,r in bad.iterrows():
+        blocking=[]
+        if not bool(r.get("Elegible_MOQ")): blocking.append("MOQ mayor que stock")
+        if pd.isna(r.get("Costo")): blocking.append("Costo inválido")
+        if blocking:
+            ik=f'OFFER::{r.get("Proveedor")}::{r.get("PRODUCT_KEY")}::{"/".join(blocking)}'
+            issues.append({"ISSUE_KEY":ik,"Tipo":"PRODUCTO","Producto":r.get("ITEM_PUBLICO"),"Proveedor":r.get("Proveedor"),
+                           "Motivo":"; ".join(blocking),"Detalle":safe_text(r.get("Descripcion"))})
+'''
+_new = '''    eligible_keys=set(offers.loc[offers["Elegible"],"PRODUCT_KEY"].astype(str))
+    bad=offers[(~offers["Elegible"]) & (~offers["PRODUCT_KEY"].astype(str).isin(eligible_keys))].copy()
+    for product_key,grp in bad.groupby("PRODUCT_KEY",dropna=False):
+        r=grp.iloc[0]
+        blocking=[]
+        if not bool(r.get("Elegible_MOQ")): blocking.append("MOQ mayor que stock")
+        if pd.isna(r.get("Costo")): blocking.append("Costo inválido")
+        if blocking:
+            ik=f'PRODUCT::{product_key}::{"/".join(blocking)}'
+            issues.append({"ISSUE_KEY":ik,"Tipo":"PRODUCTO","Producto":r.get("ITEM_PUBLICO"),"Proveedor":r.get("Proveedor"),
+                           "Motivo":"; ".join(blocking),"Detalle":safe_text(r.get("Descripcion"))})
+'''
+if _old not in source:
+    raise RuntimeError("Review hotfix target not found.")
+source = source.replace(_old, _new)
+
 exec(compile(source, "Motech_Price_List_Manager.py", "exec"), globals(), globals())
