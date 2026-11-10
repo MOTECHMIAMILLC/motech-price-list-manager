@@ -15,7 +15,7 @@ if actual_sha256 != expected_sha256:
 _old = '''    bad=offers[~offers["Elegible"]].copy()
     for _,r in bad.iterrows():
         blocking=[]
-        if bool(r.get("Elegible_Stock")) and not bool(r.get("Elegible_MOQ")): blocking.append("MOQ mayor que stock")
+        if not bool(r.get("Elegible_MOQ")): blocking.append("MOQ mayor que stock")
         if pd.isna(r.get("Costo")): blocking.append("Costo inválido")
         if blocking:
             ik=f'OFFER::{r.get("Proveedor")}::{r.get("PRODUCT_KEY")}::{"/".join(blocking)}'
@@ -27,7 +27,7 @@ _new = '''    eligible_keys=set(offers.loc[offers["Elegible"],"PRODUCT_KEY"].ast
     for product_key,grp in bad.groupby("PRODUCT_KEY",dropna=False):
         r=grp.iloc[0]
         blocking=[]
-        if not bool(r.get("Elegible_MOQ")): blocking.append("MOQ mayor que stock")
+        if bool(r.get("Elegible_Stock")) and not bool(r.get("Elegible_MOQ")): blocking.append("MOQ mayor que stock")
         if pd.isna(r.get("Costo")): blocking.append("Costo inválido")
         if blocking:
             ik=f'PRODUCT::{product_key}::{"/".join(blocking)}'
