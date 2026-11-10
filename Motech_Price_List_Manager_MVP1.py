@@ -1,0 +1,993 @@
+import os
+import re
+import io
+import html
+import hashlib
+import datetime
+from typing import Optional, List, Dict, Tuple
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+
+st.set_page_config(
+    page_title="Motech Miami — Price List Manager",
+    page_icon="🛍️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ============================================================
+# CONFIG / SCHEMA
+# ============================================================
+BASE_COLUMNS = [
+    "Proveedor", "SKU", "SKU_Fuente", "Descripcion", "Condicion", "Precio", "Stock",
+    "Stock_Miami", "Stock_NY", "En_Transito", "MOQ", "ETA", "Ubicacion",
+]
+
+MOTIVATIONAL_QUOTES = [
+    "🚀 'El éxito en las ventas no es cuestión de suerte, sino de constancia y disciplina.'",
+    "💡 'Cada no que recibes te acerca un paso más al sí definitivo.'",
+    "🎯 'Enfoque, determinación y excelente atención: la fórmula para superar cualquier meta.'",
+    "🔥 'Grandes resultados requieren grandes esfuerzos. ¡Hoy es un excelente día para cerrar tratos!'",
+    "⭐ 'El cliente no busca solo un producto, busca la confianza que tú le transmites.'",
+]
+
+PROVIDER_CODES = {
+    "HAIFA": "HAI",
+    "ALL PLUS": "APL",
+    "ALLBRANDS": "ABR",
+    "AQUA CONSUMER": "AQC",
+    "AQUA LAPTOPS": "AQL",
+    "ASE": "ASE",
+    "CELLUTECH": "CEL",
+    "EMOLO": "EMO",
+    "H&Z": "HZ",
+    "INFLUENTIAL": "INF",
+    "PRT": "PRT",
+    "SNK": "SNK",
+    "SUNRISE": "SUN",
+    "TECH SUPPLIER": "TEC",
+    "UNLIMITED": "UNL",
+    "203_TRADING": "203",
+    "WORLDWIDE": "WWD",
+}
+
+# ============================================================
+# UI STYLE
+# ============================================================
+st.markdown("""
+<style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+
+    /* Compacta el espacio superior general */
+    .block-container {padding-top: 1.2rem; padding-bottom: 1.5rem;}
+
+    .main-header {font-size:24px;font-weight:800;color:#1B365D;margin:0 0 1px 0;line-height:1.15;}
+    .sub-header {font-size:13px;color:#666;margin:0;line-height:1.25;}
+    .compact-quote {font-size:12.5px;color:#52606D;font-style:italic;margin-top:5px;line-height:1.25;}
+
+    .kpi-strip {
+        display:grid;
+        grid-template-columns:repeat(4,minmax(0,1fr));
+        gap:8px;
+        margin:8px 0 8px 0;
+    }
+    .kpi-box {
+        border:1px solid #E2E8F0;
+        background:#FFFFFF;
+        border-radius:8px;
+        padding:7px 10px;
+        min-width:0;
+    }
+    .kpi-value {font-size:20px;font-weight:800;color:#1B365D;line-height:1.05;}
+    .kpi-label {font-size:11px;color:#667085;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+    .card-deal {background-color:#E8F5E9;border-left:6px solid #2E7D32;padding:12px 16px;
+        border-radius:8px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.08);}
+    .card-title {font-size:15px;font-weight:700;color:#1B5E20;margin-bottom:4px;}
+    .badge-meta {background-color:#F0F4F8;color:#2D3748;padding:3px 6px;border-radius:4px;
+        font-size:12px;margin-right:6px;border:1px solid #CBD5E0;display:inline-block;margin-top:4px;}
+    .badge-savings {background-color:#C8E6C9;color:#1B5E20;font-weight:700;padding:3px 8px;
+        border-radius:4px;font-size:12px;float:right;}
+
+    div[data-testid="stExpander"] {margin-bottom:6px;}
+
+    @media (max-width: 800px) {
+        .kpi-strip {grid-template-columns:repeat(2,minmax(0,1fr));}
+        .main-header {font-size:20px;}
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ============================================================
+# NORMALIZATION HELPERS
+# ============================================================
+def _norm_col(x) -> str:
+    return re.sub(r"\s+", " ", str(x).strip()).upper()
+
+
+def clean_price(v) -> Optional[float]:
+    if pd.isna(v):
+        return None
+    s = str(v).strip().upper()
+    if not s or any(x in s for x in ["SOLD OUT", "N/A", "CALL", "TBD"]):
+        return None
+    s = s.replace("$", "").replace(",", "").replace("USD", "").strip()
+    m = re.search(r"-?\d+(?:\.\d+)?", s)
+    if not m:
+        return None
+    try:
+        p = float(m.group())
+        return p if p > 0 else None
+    except Exception:
+        return None
+
+
+def clean_qty(v) -> Optional[float]:
+    if pd.isna(v):
+        return None
+    if isinstance(v, (int, float)) and not pd.isna(v):
+        return max(float(v), 0)
+    s = str(v).strip().upper().replace(",", "")
+    if s in {"", "-", "N/A", "NA", "NONE", "NAN"}:
+        return 0.0
+    m = re.search(r"\d+(?:\.\d+)?", s)
+    return max(float(m.group()), 0) if m else None
+
+
+def safe_text(v, default="") -> str:
+    if pd.isna(v):
+        return default
+    s = str(v).strip()
+    return "" if s.lower() in {"nan", "none"} else s
+
+
+def synthetic_sku(desc: str, provider: str) -> str:
+    digest = hashlib.md5(desc.upper().encode("utf-8", errors="ignore")).hexdigest()[:10].upper()
+    return f"{PROVIDER_CODES.get(provider, 'UNK')}-AUTO-{digest}"
+
+
+def infer_sku_from_description(desc: str, provider: str) -> Tuple[str, str]:
+    text = safe_text(desc).upper()
+    # Common manufacturer/model/MPN patterns. Avoid obvious capacity/spec tokens.
+    tokens = re.findall(r"\b[A-Z0-9][A-Z0-9#./_-]{4,30}\b", text)
+    bad = re.compile(r"^(?:\d+(?:GB|TB|HZ|W)|WIN(?:DOWS)?11|DDR\d|LPDDR\d|RTX|WUXGA|FHD|OLED|IPS)$")
+    candidates = []
+    for t in tokens:
+        t = t.strip(".,;:()[]{}")
+        if bad.match(t):
+            continue
+        if not re.search(r"[A-Z]", t) or not re.search(r"\d", t):
+            continue
+        # score model-like tokens higher than specs
+        score = 0
+        score += 3 if "-" in t or "/" in t or "#" in t else 0
+        score += min(len(t), 20) / 20
+        if re.search(r"\d{3,}", t): score += 1
+        if any(x in t for x in ["GB", "TB", "HZ", "GHZ", "MHZ"]): score -= 3
+        candidates.append((score, t))
+    if candidates:
+        candidates.sort(reverse=True)
+        return candidates[0][1], "INFERRED"
+    return synthetic_sku(text, provider), "SYNTHETIC"
+
+
+def first_col(df: pd.DataFrame, aliases: List[str]) -> Optional[str]:
+    normalized = {c: _norm_col(c) for c in df.columns}
+    aliases_n = [_norm_col(a) for a in aliases]
+    # exact first
+    for c, n in normalized.items():
+        if n in aliases_n:
+            return c
+    # then safe substring
+    for c, n in normalized.items():
+        if any(a in n for a in aliases_n if len(a) >= 4):
+            return c
+    return None
+
+
+def header_row(raw: pd.DataFrame, require_price=True, max_rows=25) -> Optional[int]:
+    sku_words = ["SKU", "MODEL", "MPN", "PART NUMBER", "PART #", "ITEM", "ITEM NUMBER", "ITEM CODE"]
+    price_words = ["PRICE", "COST", "FOB", "CASH", "EXW"]
+    desc_words = ["DESCRIPTION", "PRODUCT", "ITEM NAME", "ITEM DESCRIPTION", "PRODUCTS"]
+    best = None
+    for i in range(min(max_rows, len(raw))):
+        vals = [_norm_col(v) for v in raw.iloc[i].tolist() if pd.notna(v)]
+        has_sku = any(any(k in v for k in sku_words) for v in vals)
+        has_price = any(any(k in v for k in price_words) for v in vals)
+        has_desc = any(any(k in v for k in desc_words) for v in vals)
+        score = int(has_sku) * 3 + int(has_price) * 3 + int(has_desc) * 2
+        if best is None or score > best[0]: best = (score, i, has_price)
+    if not best or best[0] < 5 or (require_price and not best[2]):
+        return None
+    return best[1]
+
+
+def excel_file(uploaded):
+    uploaded.seek(0)
+    data = uploaded.read()
+    uploaded.seek(0)
+    name = uploaded.name.lower()
+    if name.endswith(".xls"):
+        try:
+            import xlrd  # noqa: F401
+        except ImportError as e:
+            raise RuntimeError(
+                "Para leer archivos .xls (por ejemplo Cellutech) instala xlrd. "
+                "Agrega 'xlrd==2.0.1' a requirements.txt."
+            ) from e
+    return pd.ExcelFile(io.BytesIO(data))
+
+
+def empty_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=BASE_COLUMNS)
+
+
+def make_row(provider, sku, desc, price, stock=None, stock_miami=None, stock_ny=None,
+             transit=None, moq=None, eta="", location="", condition="", sku_source="FILE") -> Optional[dict]:
+    p = clean_price(price)
+    d = safe_text(desc)
+    sku = safe_text(sku).upper()
+    if not sku:
+        sku, sku_source = infer_sku_from_description(d, provider)
+    if not d or p is None:
+        return None
+    return {
+        "Proveedor": provider,
+        "SKU": sku,
+        "SKU_Fuente": sku_source,
+        "Descripcion": d,
+        "Condicion": safe_text(condition),
+        "Precio": p,
+        "Stock": clean_qty(stock),
+        "Stock_Miami": clean_qty(stock_miami),
+        "Stock_NY": clean_qty(stock_ny),
+        "En_Transito": clean_qty(transit),
+        "MOQ": clean_qty(moq),
+        "ETA": safe_text(eta),
+        "Ubicacion": safe_text(location),
+    }
+
+
+def finalize(rows: List[dict]) -> pd.DataFrame:
+    if not rows:
+        return empty_frame()
+
+    # Build every expected column first so Pandas does not infer an incompatible
+    # dtype and later reject assignments (stricter in newer Pandas versions).
+    df = pd.DataFrame(rows).reindex(columns=BASE_COLUMNS)
+
+    numeric_cols = [
+        "Precio", "Stock", "Stock_Miami", "Stock_NY", "En_Transito", "MOQ"
+    ]
+    for c in numeric_cols:
+        df[c] = pd.to_numeric(df[c], errors="coerce").astype("Float64")
+
+    text_cols = [
+        "Proveedor", "SKU", "SKU_Fuente", "Descripcion", "Condicion", "ETA", "Ubicacion"
+    ]
+    for c in text_cols:
+        df[c] = df[c].where(df[c].notna(), "").astype("string")
+
+    # Prefer explicit Stock; otherwise use Miami + NY where available.
+    has_city = df[["Stock_Miami", "Stock_NY"]].notna().any(axis=1)
+    needs_stock = df["Stock"].isna() & has_city
+    if bool(needs_stock.any()):
+        summed = (
+            df[["Stock_Miami", "Stock_NY"]]
+            .fillna(0)
+            .sum(axis=1)
+            .astype("Float64")
+        )
+        df.loc[needs_stock, "Stock"] = summed.loc[needs_stock].to_numpy()
+
+    df["SKU"] = df["SKU"].str.strip().str.upper()
+
+    # Global commercial filters:
+    # 1) BONDED inventory must never reach the comparator.
+    # 2) Only products with confirmed stock > 0 are shown. Unknown/missing stock is excluded.
+    bonded_text = (
+        df["SKU"].astype("string").fillna("") + " " +
+        df["Descripcion"].astype("string").fillna("") + " " +
+        df["Condicion"].astype("string").fillna("")
+    ).str.upper()
+    df = df[~bonded_text.str.contains("BONDED", regex=False, na=False)]
+    df = df[(df["SKU"] != "") & df["Precio"].notna() & df["Stock"].notna() & (df["Stock"] > 0)]
+    return df[BASE_COLUMNS].drop_duplicates().reset_index(drop=True)
+
+
+# ============================================================
+# CATEGORY / SPEC EXTRACTION
+# ============================================================
+def clasificar_categoria(desc, sku, condition=""):
+    text = f"{safe_text(desc)} {safe_text(sku)} {safe_text(condition)}".upper()
+
+    # Refurbished has absolute priority regardless of product type.
+    refurb_keys = [
+        "REFURBISHED", "REFURB", "RENEWED", "RECERTIFIED",
+        "RECONDITIONED", "RECONDITION", "CERTIFIED REFURBISHED",
+    ]
+    if any(k in text for k in refurb_keys):
+        return "♻️ REFURBISHED"
+
+    gaming_keys = [
+        "PLAYSTATION", "PS5", "PS4", "XBOX", "NINTENDO", "SWITCH", "JOY-CON", "JOYCON",
+        "ROG ALLY", "LEGION GO", "STEAM DECK", "META QUEST", "OCULUS",
+        "ALIENWARE", "PREDATOR", "OMEN", "VICTUS", "ZEPHYRUS", "CYBORG", "RAIDER",
+        "KATANA", "STRIX", "SCAR", "ROG ", " TUF ", "NITRO", "LOQ",
+        "GAMING LAPTOP", "GAMING DESKTOP", "GAMING PC", "GAMING HEADSET",
+        "GAMING MOUSE", "GAMING KEYBOARD", "LOGITECH G", "HYPERX", "ASTRO",
+    ]
+    if any(k in text for k in gaming_keys):
+        return "🎮 Gaming"
+
+    desktop_keys = [
+        "DESKTOP", "ALL IN ONE", "ALL-IN-ONE", " AIO ", "THINKCENTRE", "THINKCENTER",
+        "OPTIPLEX", "PRODESK", "ELITEDESK", "THINKSTATION", "MINI PC", "MINI DESKTOP",
+        "MICRO PC", "SFF", "SMALL FORM FACTOR", "TOWER", "WORKSTATION", "SERVER", "NUC",
+        "PRECISION TOWER", "PRECISION WORKSTATION", "HP Z2", "HP Z4", "HP Z6", "HP Z8",
+    ]
+    if any(k in text for k in desktop_keys):
+        return "🖥️ Desktops & PC"
+
+    laptop_keys = [
+        "MACBOOK", "LAPTOP", "NOTEBOOK", "CHROMEBOOK", "ASPIRE", "VIVOBOOK", "ZENBOOK",
+        "EXPERTBOOK", "IDEAPAD", "THINKPAD", "LATITUDE", "INSPIRON", "VOSTRO",
+        "PROBOOK", "ELITEBOOK", "ZBOOK", "PAVILION", "ENVY", "SPECTRE", "OMNIBOOK",
+        "SURFACE LAPTOP", "LG GRAM", "YOGA", "SWIFT", "TRAVELMATE", "DELL PRO ",
+    ]
+    if any(k in text for k in laptop_keys):
+        return "💻 Laptops"
+
+    # Multimedia is intentionally separate from generic accessories.
+    multimedia_keys = [
+        "SPEAKER", "SPEAKERS", "BLUETOOTH SPEAKER", "SOUNDBAR", "SOUND BAR",
+        "HEADPHONE", "HEADPHONES", "EARBUD", "EARBUDS", "AIRPODS", "BEATS",
+        "WIRELESS EARBUD", "TRUE WIRELESS", "TWS", "ECHO DOT", "ECHO SHOW", "ALEXA",
+        "FIRE TV", "FIRE STICK", "TV STICK", "CHROMECAST", "ROKU", "APPLE TV",
+        "STREAMING DEVICE", "MEDIA PLAYER", "SMART TV BOX",
+    ]
+    if any(k in text for k in multimedia_keys):
+        return "🎵 Multimedia"
+
+    if any(k in text for k in ["IPAD", "TABLET", " TAB ", "GALAXY TAB", "SURFACE PRO"]):
+        return "📱 Tablets"
+
+    if any(k in text for k in ["MONITOR", "DISPLAY", "144HZ", "165HZ", "180HZ", "240HZ"]):
+        return "🖥️ Monitores"
+
+    accessory_keys = [
+        "MOUSE", "KEYBOARD", "CABLE", "PENCIL", "STYLUS", "CASE", "COVER", "DOCK",
+        "DOCKING", "ADAPTER", "ADAPTOR", "CHARGER", "POWER SUPPLY", "WEBCAM",
+        "USB HUB", "HUB ", "BACKPACK", "SLEEVE",
+    ]
+    if any(k in text for k in accessory_keys):
+        return "🎧 Accesorios"
+
+    # Specification fallback for laptop descriptions without a known family name.
+    has_cpu = bool(re.search(r"\b(?:CORE\s+(?:ULTRA\s+)?[3579]|I[3579][-\s]|RYZEN(?:\s+AI)?\s+[3579]|SNAPDRAGON\s+X|CELERON|PENTIUM)\b", text))
+    has_screen = bool(re.search(r'\b1[1-7](?:\.\d)?\s*(?:INCH|IN|"|″)?\b', text))
+    has_memory = bool(re.search(r"\b(?:4|8|12|16|24|32|48|64)\s*GB\b", text))
+    if has_cpu and has_screen and has_memory:
+        return "💻 Laptops"
+
+    return "📦 Otros / Varios"
+
+def extraer_especificaciones(text):
+    t = str(text).upper()
+    cpu = "Otro / No especificado"
+    cpu_patterns = [
+        (r"\bCORE\s+ULTRA\s*9\b|\bULTRA\s*9\b", "Intel Core Ultra 9"),
+        (r"\bCORE\s+ULTRA\s*7\b|\bULTRA\s*7\b", "Intel Core Ultra 7"),
+        (r"\bCORE\s+ULTRA\s*5\b|\bULTRA\s*5\b", "Intel Core Ultra 5"),
+        (r"\bI9[-\s]|\bCORE\s*I9\b", "Intel Core i9"),
+        (r"\bI7[-\s]|\bCORE\s*I7\b", "Intel Core i7"),
+        (r"\bI5[-\s]|\bCORE\s*I5\b", "Intel Core i5"),
+        (r"\bI3[-\s]|\bCORE\s*I3\b", "Intel Core i3"),
+        (r"\bRYZEN\s*(?:AI\s*)?9\b|\bR9[-\s]", "AMD Ryzen 9"),
+        (r"\bRYZEN\s*(?:AI\s*)?7\b|\bR7[-\s]", "AMD Ryzen 7"),
+        (r"\bRYZEN\s*(?:AI\s*)?5\b|\bR5[-\s]", "AMD Ryzen 5"),
+        (r"\bRYZEN\s*(?:AI\s*)?3\b|\bR3[-\s]", "AMD Ryzen 3"),
+        (r"\bAPPLE\s*M5\b|\bM5 CHIP\b", "Apple M5"),
+        (r"\bAPPLE\s*M4\b|\bM4 CHIP\b", "Apple M4"),
+        (r"\bAPPLE\s*M3\b|\bM3 CHIP\b", "Apple M3"),
+        (r"\bAPPLE\s*M2\b|\bM2 CHIP\b", "Apple M2"),
+        (r"\bAPPLE\s*M1\b|\bM1 CHIP\b", "Apple M1"),
+    ]
+    for pat, label in cpu_patterns:
+        if re.search(pat, t): cpu = label; break
+
+    ram = "Otro / No especificado"
+    for n in [64, 48, 32, 24, 16, 12, 8, 4]:
+        if re.search(rf"\b{n}\s*GB\b", t): ram = f"{n} GB"; break
+
+    storage = "Otro / No especificado"
+    if re.search(r"\b2\s*TB\b|\b2000\s*GB\b", t): storage = "2 TB SSD"
+    elif re.search(r"\b1\s*TB\b|\b1000\s*GB\b|\b1024\s*GB\b", t): storage = "1 TB SSD"
+    elif re.search(r"\b512\s*GB\b", t): storage = "512 GB SSD"
+    elif re.search(r"\b256\s*GB\b", t): storage = "256 GB SSD"
+    elif re.search(r"\b128\s*GB\b", t): storage = "128 GB"
+
+    screen = "Otro / No especificado"
+    m = re.search(r"\b(1[0-9]|2[0-9])(?:\.\d)?\s*(?:\"|INCH|IN)\b", t)
+    if m: screen = m.group(0).replace("INCH", '"').replace("IN", '"')
+    return pd.Series([cpu, ram, storage, screen])
+
+
+# ============================================================
+# PROVIDER DETECTION
+# ============================================================
+def detect_provider(filename: str) -> str:
+    n = os.path.splitext(filename)[0].upper()
+    if "HAIFA" in n: return "HAIFA"
+    if "ALL PLUS" in n: return "ALL PLUS"
+    if "ALLBRAND" in n: return "ALLBRANDS"
+    if "AQUA" in n and ("LATOP" in n or "LAPTOP" in n): return "AQUA LAPTOPS"
+    if "AQUA" in n: return "AQUA CONSUMER"
+    if re.search(r"\bASE\b", n): return "ASE"
+    if "CELLU" in n: return "CELLUTECH"
+    if "EMOLO" in n: return "EMOLO"
+    if "H&Z" in n or "H Z" in n: return "H&Z"
+    if "INFLUENTIAL" in n: return "INFLUENTIAL"
+    if "PRT" in n: return "PRT"
+    if "SNK" in n: return "SNK"
+    if "SUNRISE" in n or re.search(r"\bSUN\b", n): return "SUNRISE"
+    if "TECH SUPPLIER" in n: return "TECH SUPPLIER"
+    if "203_TRADING" in n or "203 TRADING" in n: return "203_TRADING"
+    if "TRADING" in n: return "UNLIMITED"
+    if "WORLDWIDE" in n: return "WORLDWIDE"
+    return re.sub(r"\(\d+\)$", "", n).strip()
+
+
+# ============================================================
+# PARSERS
+# ============================================================
+def parse_simple_table(xls, provider, sheet, hdr=None, aliases=None) -> pd.DataFrame:
+    raw = pd.read_excel(xls, sheet_name=sheet, header=None)
+    h = hdr if hdr is not None else header_row(raw)
+    if h is None: return empty_frame()
+    df = pd.read_excel(xls, sheet_name=sheet, header=h)
+    aliases = aliases or {}
+    c_sku = first_col(df, aliases.get("sku", ["SKU", "MODEL", "MPN", "PART NUMBER", "PART #", "ITEM", "ITEM NUMBER", "ITEM CODE"]))
+    c_desc = first_col(df, aliases.get("desc", ["DESCRIPTION", "PRODUCT", "PRODUCTS", "ITEM DESCRIPTION", "ITEM NAME", "PRODUCT DESCRIPTION"]))
+    c_price = first_col(df, aliases.get("price", ["PRICE", "PRICE (USD)", "COST", "FOB", "FOB $", "CASH", "EXW"]))
+    c_qty = first_col(df, aliases.get("qty", ["QTY", "QUANTITY", "STOCK", "IN STOCK", "UNITS"]))
+    c_eta = first_col(df, aliases.get("eta", ["ETA"]))
+    c_loc = first_col(df, aliases.get("location", ["LOCATION", "EXW"]))
+    c_moq = first_col(df, aliases.get("moq", ["MOQ"]))
+    if c_price is None: return empty_frame()
+    rows = []
+    for _, r in df.iterrows():
+        desc = safe_text(r[c_desc]) if c_desc else ""
+        sku = safe_text(r[c_sku]) if c_sku else ""
+        if not desc and sku: desc = sku
+        row = make_row(provider, sku, desc, r[c_price],
+                       stock=r[c_qty] if c_qty else None,
+                       moq=r[c_moq] if c_moq else None,
+                       eta=r[c_eta] if c_eta else "",
+                       location=r[c_loc] if c_loc else "")
+        if row: rows.append(row)
+    return finalize(rows)
+
+
+def parse_haifa(xls):
+    sheet = next((s for s in xls.sheet_names if s.strip().upper() == "FULL LIST"), xls.sheet_names[0])
+    return parse_simple_table(xls, "HAIFA", sheet)
+
+
+def parse_allplus(xls):
+    return parse_simple_table(xls, "ALL PLUS", xls.sheet_names[0], aliases={"sku":["MODEL"], "desc":["DESCRIPTION"], "price":["PRICE"]})
+
+
+def parse_allbrands(xls):
+    raw = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None)
+    h = header_row(raw)
+    df = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=h)
+    c_desc, c_stock, c_price = first_col(df,["DESCRIPTION"]), first_col(df,["STOCK"]), first_col(df,["PRICE"])
+    rows=[]
+    for _,r in df.iterrows():
+        desc=safe_text(r[c_desc]) if c_desc else ""
+        sku,source=infer_sku_from_description(desc,"ALLBRANDS")
+        row=make_row("ALLBRANDS",sku,desc,r[c_price] if c_price else None,stock=r[c_stock] if c_stock else None,sku_source=source)
+        if row: rows.append(row)
+    return finalize(rows)
+
+
+def parse_aqua(xls, provider):
+    raw=pd.read_excel(xls,sheet_name="Sheet1",header=None)
+    h=header_row(raw)
+    df=pd.read_excel(xls,sheet_name="Sheet1",header=h)
+    c_sku=first_col(df,["PART NUMBER"]); c_desc=first_col(df,["DESCRIPTION"]); c_price=first_col(df,["FOB $","FOB"])
+    c_mia=first_col(df,["MIAMI"]); c_ny=first_col(df,["NEW YORK"])
+    rows=[]
+    for _,r in df.iterrows():
+        mia=clean_qty(r[c_mia]) if c_mia else None; ny=clean_qty(r[c_ny]) if c_ny else None
+        stock=(mia or 0)+(ny or 0) if (mia is not None or ny is not None) else None
+        loc=[]
+        if mia: loc.append(f"Miami {int(mia)}")
+        if ny: loc.append(f"NY {int(ny)}")
+        row=make_row(provider,r[c_sku] if c_sku else "",r[c_desc] if c_desc else "",r[c_price] if c_price else None,
+                     stock=stock,stock_miami=mia,stock_ny=ny,location=" / ".join(loc))
+        if row: rows.append(row)
+    return finalize(rows)
+
+
+def parse_ase(xls):
+    raw=pd.read_excel(xls,sheet_name=xls.sheet_names[0],header=None)
+    rows=[]
+    # ASE repeats the same header for sections. Detect data rows by price in col 3.
+    for _,r in raw.iterrows():
+        vals=r.tolist()
+        # ASE places Model/Description/Price at columns 3/4/5 and repeats headers by section.
+        sku=safe_text(vals[3] if len(vals)>3 else "")
+        desc=safe_text(vals[4] if len(vals)>4 else "")
+        price=clean_price(vals[5] if len(vals)>5 else None)
+        if not desc or price is None or sku.upper() in {"MODEL","LOC"}: continue
+        if not sku:
+            sku,source=infer_sku_from_description(desc,"ASE")
+        else:
+            source="FILE"
+        stock=vals[6] if len(vals)>6 else None
+        transit=vals[7] if len(vals)>7 else None
+        eta=vals[8] if len(vals)>8 else ""
+        row=make_row("ASE",sku,desc,price,stock=stock,transit=transit,eta=eta,sku_source=source)
+        if row: rows.append(row)
+    return finalize(rows)
+
+
+def parse_emolo(xls):
+    return parse_simple_table(xls,"EMOLO",xls.sheet_names[0],aliases={"sku":["MODEL"],"desc":["DESCRIPTION"],"qty":["QTY"],"price":["PRICE"]})
+
+
+def parse_hz(xls):
+    sheet=next((s for s in xls.sheet_names if s.strip().upper()=="ALL PRODUCTS"),xls.sheet_names[0])
+    # Model Number is the more useful cross-vendor MPN. Fall back to SKU/UPC.
+    df=pd.read_excel(xls,sheet_name=sheet,header=0)
+    rows=[]
+    for _,r in df.iterrows():
+        sku=safe_text(r.get("Model Number")) or safe_text(r.get("SKU"))
+        row=make_row("H&Z",sku,r.get("Description"),r.get("Price (USD)"),stock=r.get("Qty"),moq=r.get("MOQ"),eta=r.get("ETA"),location=r.get("EXW"))
+        if row: rows.append(row)
+    return finalize(rows)
+
+
+def parse_influential(xls):
+    df=pd.read_excel(xls,sheet_name=xls.sheet_names[0],header=0)
+    rows=[]
+    for _,r in df.iterrows():
+        sku=safe_text(r.get("MPN")) or safe_text(r.get("SKU")) or safe_text(r.get("UPC"))
+        row=make_row("INFLUENTIAL",sku,r.get("Description"),r.get("Price"),stock=r.get("Qty"))
+        if row: rows.append(row)
+    return finalize(rows)
+
+
+def parse_prt(xls):
+    return parse_simple_table(xls,"PRT",xls.sheet_names[0],hdr=0,aliases={"sku":["PART NUMBER"],"desc":["DESCRIPTION"],"qty":["QTY"],"price":["PRICE"]})
+
+
+def parse_snk(xls):
+    rows=[]
+    for sheet in xls.sheet_names:
+        su=sheet.strip().upper()
+        if "IPHONE" in su:  # layout is a matrix, not a normal SKU table; skip safely for now
+            continue
+        raw=pd.read_excel(xls,sheet_name=sheet,header=None)
+        h=header_row(raw)
+        if h is None: continue
+        df=pd.read_excel(xls,sheet_name=sheet,header=h)
+        c_sku=first_col(df,["MODEL","SKU"])
+        c_desc=first_col(df,["ALL PRODUCTS","PRODUCTS","DESCRIPTION"])
+        c_price=first_col(df,["PRICE (USD$)","EXW - NY","PRICE"])
+        c_qty=first_col(df,["UNITS","UNITS - MIAMI","QTY"])
+        c_ny=first_col(df,["UNITS - NY"])
+        c_mia=first_col(df,["UNITS - MIAMI"])
+        c_loc=first_col(df,["LOCATION"])
+        if c_price is None: continue
+        for _,r in df.iterrows():
+            desc=safe_text(r[c_desc]) if c_desc else ""
+            sku=safe_text(r[c_sku]) if c_sku else ""
+            if not sku or not desc: continue
+            mia=clean_qty(r[c_mia]) if c_mia else (clean_qty(r[c_qty]) if c_qty and "MIAMI" in su else None)
+            ny=clean_qty(r[c_ny]) if c_ny else (clean_qty(r[c_qty]) if c_qty and "NY STOCK" in su else None)
+            stock=clean_qty(r[c_qty]) if c_qty else None
+            if c_mia or c_ny: stock=(mia or 0)+(ny or 0)
+            loc=safe_text(r[c_loc]) if c_loc else sheet.strip()
+            row=make_row("SNK",sku,desc,r[c_price],stock=stock,stock_miami=mia,stock_ny=ny,location=loc)
+            if row: rows.append(row)
+    return finalize(rows)
+
+
+def parse_sunrise(xls):
+    sheet=next((s for s in xls.sheet_names if "PRICE" in s.upper()),xls.sheet_names[0])
+    raw=pd.read_excel(xls,sheet_name=sheet,header=None)
+    rows=[]
+    # Columns in this workbook: QTY, category, description, stock/transit, Cash, take-all.
+    for _,r in raw.iterrows():
+        vals=r.tolist()
+        if len(vals)<5: continue
+        qty=clean_qty(vals[0]); desc=safe_text(vals[2] if len(vals)>2 else "")
+        status=safe_text(vals[3] if len(vals)>3 else "").upper()
+        cash=clean_price(vals[4] if len(vals)>4 else None)
+        if not desc or cash is None or qty is None: continue
+        sku,source=infer_sku_from_description(desc,"SUNRISE")
+        stock=qty if "STOCK" in status else 0
+        transit=qty if "TRANSIT" in status else 0
+        row=make_row("SUNRISE",sku,desc,cash,stock=stock,transit=transit,location=status,sku_source=source)
+        if row: rows.append(row)
+    return finalize(rows)
+
+
+def parse_tech(xls):
+    # Consolidate duplicate item/location rows into one row per SKU at same price.
+    df=parse_simple_table(xls,"TECH SUPPLIER",xls.sheet_names[0],hdr=0,
+                          aliases={"sku":["ITEM NUMBER"],"desc":["ITEM DESCRIPTION"],"qty":["QUANTITY"],"price":["PRICE"],"location":["LOCATION"]})
+    if df.empty: return df
+    # Convert rows tagged in transit to En_Transito; Miami rows remain Stock.
+    transit_mask=df["Ubicacion"].astype("string").str.upper().str.contains("TRANSIT",na=False)
+    df["Stock"] = pd.to_numeric(df["Stock"], errors="coerce").astype("Float64")
+    df["En_Transito"] = pd.to_numeric(df["En_Transito"], errors="coerce").astype("Float64")
+    if bool(transit_mask.any()):
+        df.loc[transit_mask,"En_Transito"] = df.loc[transit_mask,"Stock"].to_numpy()
+        df.loc[transit_mask,"Stock"] = 0.0
+    grouped=[]
+    for (sku,price),g in df.groupby(["SKU","Precio"],dropna=False):
+        best=g.iloc[0].copy()
+        best["Stock"]=g["Stock"].fillna(0).sum()
+        best["En_Transito"]=g["En_Transito"].fillna(0).sum()
+        best["Ubicacion"]=" / ".join(sorted(set(x for x in g["Ubicacion"].astype(str) if x and x.lower()!="nan")))
+        best["Descripcion"]=max(g["Descripcion"].astype(str),key=len)
+        grouped.append(best.to_dict())
+    return finalize(grouped)
+
+
+def parse_unlimited(xls):
+    rows=[]
+    for sheet in xls.sheet_names:
+        raw=pd.read_excel(xls,sheet_name=sheet,header=None)
+        h=header_row(raw)
+        if h is None: continue
+        df=pd.read_excel(xls,sheet_name=sheet,header=h)
+        su=sheet.strip().upper()
+        # aliases vary by brand sheet
+        c_sku=first_col(df,["SKU","ITEM NUMBER","ITEMKEY","ITEM CODE","MODEL"])
+        c_desc=first_col(df,["DESCRIPTION","PRODUCTS:","PRODUCT DESCRIPTION","ITEMNAME","KEY FEATURE DESCRIPTION","HP"])
+        c_qty=first_col(df,["QUANTITY","MASTER","QTY","AVAILABILITY"])
+        c_price=first_col(df,["PROMO PRICE","PRICE","PRICE ","COST"])
+        if c_price is None: continue
+        # House of Marley has continuation rows for color variants; carry description down.
+        if c_desc is not None and "HOUSE OF MARLEY" in su:
+            df[c_desc]=df[c_desc].ffill()
+        for _,r in df.iterrows():
+            sku=safe_text(r[c_sku]) if c_sku else ""
+            desc=safe_text(r[c_desc]) if c_desc else ""
+            if not sku and desc:
+                sku,source=infer_sku_from_description(desc,"UNLIMITED")
+            else:
+                source="FILE"
+            price=r[c_price]
+            # If PROMO PRICE exists but is blank, fall back to regular PRICE.
+            if clean_price(price) is None and _norm_col(c_price)=="PROMO PRICE":
+                regular=first_col(df,["PRICE"])
+                price=r[regular] if regular else price
+            stock=r[c_qty] if c_qty else None
+            # Availability like NOW is not numeric; leave stock unknown.
+            row=make_row("UNLIMITED",sku,desc,price,stock=stock,location=sheet.strip(),sku_source=source)
+            if row: rows.append(row)
+    return finalize(rows)
+
+
+def parse_203_trading(xls):
+    """203 Trading consolidated inventory from the 'Inventory Search' sheet."""
+    sheet = "Inventory Search" if "Inventory Search" in xls.sheet_names else xls.sheet_names[0]
+    raw = pd.read_excel(xls, sheet_name=sheet, header=None)
+    h = None
+    for i in range(min(20, len(raw))):
+        vals = [_norm_col(v) for v in raw.iloc[i].tolist() if pd.notna(v)]
+        if "VENDOR PN" in vals and "PRICE" in vals and any(v in vals for v in ["QTY.", "QTY", "QUANTITY"]):
+            h = i
+            break
+    if h is None:
+        return empty_frame()
+
+    df = pd.read_excel(xls, sheet_name=sheet, header=h)
+    c_sku = first_col(df, ["VENDOR PN", "SKU", "MPN", "PART NUMBER"])
+    c_desc = first_col(df, ["DESCRIPTION", "PRODUCT DESCRIPTION"])
+    c_condition = first_col(df, ["CONDITION"])
+    c_qty = first_col(df, ["QTY.", "QTY", "QUANTITY"])
+    c_price = first_col(df, ["PRICE", "COST"])
+    c_form = first_col(df, ["FORM FACTOR", "CATEGORY"])
+
+    rows = []
+    if c_price is None:
+        return empty_frame()
+    for _, r in df.iterrows():
+        sku = safe_text(r[c_sku]) if c_sku else ""
+        desc = safe_text(r[c_desc]) if c_desc else sku
+        condition = safe_text(r[c_condition]) if c_condition else ""
+        form = safe_text(r[c_form]) if c_form else ""
+        row = make_row(
+            "203_TRADING", sku, desc, r[c_price],
+            stock=(r[c_qty] if c_qty else None),
+            location=form, condition=condition, sku_source="FILE"
+        )
+        if row:
+            rows.append(row)
+    return finalize(rows)
+
+
+def parse_worldwide(xls):
+    df=pd.read_excel(xls,sheet_name=xls.sheet_names[0],header=0)
+    rows=[]
+    for _,r in df.iterrows():
+        item=safe_text(r.get("ITEM"))
+        sku=item.split(":",1)[1].strip() if ":" in item else item
+        row=make_row("WORLDWIDE",sku,r.get("Description"),r.get("FOB"),stock=r.get("QTY"),location="Miami")
+        if row: rows.append(row)
+    return finalize(rows)
+
+
+def parse_cellutech(xls):
+    # Legacy .xls workbook with several different product families.
+    # Requires xlrd when uploaded as .xls.
+    parts=[]
+    for sheet in xls.sheet_names:
+        try:
+            su=sheet.strip().upper()
+            if su=="TABLETS":
+                aliases={"sku":["PART NO"],"desc":["DESCRIPTION"],"qty":["ON HAND"],"price":["FOB DUBAI($)","FOB"]}
+            elif su=="HP POLY":
+                aliases={"sku":["PART NUMBER"],"desc":["DESCRIPTION"],"price":["PRICE"],"moq":["MOQ"]}
+            elif su=="STEEL SERIES":
+                aliases={"sku":["PART #"],"desc":["DESCRIPTION"],"qty":["QUANTITY"],"price":["PRICE IN USD","PRICE"]}
+            elif su=="DUBAI LAPTOPS":
+                aliases={"sku":["PART NO"],"desc":["DESCRIPTION"],"qty":["ON HAND"],"price":["FOB DUBAI($)","FOB"]}
+            else:
+                aliases=None
+            d=parse_simple_table(xls,"CELLUTECH",sheet,hdr=0,aliases=aliases)
+            if not d.empty:
+                if "DUBAI" in su:
+                    d["Ubicacion"]="Dubai"
+                parts.append(d)
+        except Exception:
+            continue
+    return pd.concat(parts,ignore_index=True).drop_duplicates() if parts else empty_frame()
+
+
+PARSERS = {
+    "HAIFA": parse_haifa,
+    "ALL PLUS": parse_allplus,
+    "ALLBRANDS": parse_allbrands,
+    "AQUA CONSUMER": lambda x: parse_aqua(x,"AQUA CONSUMER"),
+    "AQUA LAPTOPS": lambda x: parse_aqua(x,"AQUA LAPTOPS"),
+    "ASE": parse_ase,
+    "CELLUTECH": parse_cellutech,
+    "EMOLO": parse_emolo,
+    "H&Z": parse_hz,
+    "INFLUENTIAL": parse_influential,
+    "PRT": parse_prt,
+    "SNK": parse_snk,
+    "SUNRISE": parse_sunrise,
+    "TECH SUPPLIER": parse_tech,
+    "UNLIMITED": parse_unlimited,
+    "203_TRADING": parse_203_trading,
+    "WORLDWIDE": parse_worldwide,
+}
+
+
+def parse_uploaded(uploaded) -> Tuple[pd.DataFrame, dict]:
+    provider=detect_provider(uploaded.name)
+    info={"Archivo":uploaded.name,"Proveedor":provider,"Productos":0,"Estado":"OK","Detalle":""}
+    try:
+        xls=excel_file(uploaded)
+        parser=PARSERS.get(provider)
+        if parser is None:
+            # Last-resort generic parser across sheets.
+            parts=[]
+            for s in xls.sheet_names:
+                d=parse_simple_table(xls,provider,s)
+                if not d.empty: parts.append(d)
+            df=pd.concat(parts,ignore_index=True).drop_duplicates() if parts else empty_frame()
+        else:
+            df=parser(xls)
+        info["Productos"]=len(df)
+        if df.empty:
+            info["Estado"]="⚠️ Sin datos"
+            info["Detalle"]="No se detectaron filas válidas con SKU/Descripción y precio."
+        return df,info
+    except Exception as e:
+        info["Estado"]="❌ Error"
+        info["Detalle"]=str(e)
+        return empty_frame(),info
+
+
+# ============================================================
+# PRICE LIST MANAGER — MVP 1
+# ============================================================
+SUPPLIER_MASTER_ALIASES = {
+    "H&Z": "H&Z", "SUNRISE": "SUNRISE INTERNATIONAL", "ALL PLUS": "ALLPLUS",
+    "HAIFA": "HAIFA", "ALLBRANDS": "ALLBRANDS", "AQUA CONSUMER": "AQUA",
+    "AQUA LAPTOPS": "AQUA", "SNK": "SNK DISTRIBUTION INC", "WORLDWIDE": "WORLWIDE",
+    "TECH SUPPLIER": "TECH SUPPLIER", "UNLIMITED": "TRADING UNLIMITED",
+    "203_TRADING": "203 TRADING", "EMOLO": "EMOLO", "PRT": "PRT",
+}
+
+def _clean_master_name(v):
+    return re.sub(r"\s+", " ", safe_text(v).strip()).upper()
+
+def load_supplier_master():
+    candidates=[Path(__file__).resolve().parent/"supplier_master.xlsx",Path.cwd()/"supplier_master.xlsx"]
+    p=next((x for x in candidates if x.exists()),None)
+    if p is None:
+        return pd.DataFrame(columns=["CODIGO PROVEEDOR","MOQ","ETA","NOMBRE","_NOMBRE_N"])
+    try:
+        df=pd.read_excel(p)
+        rename={}
+        for c in df.columns:
+            n=_norm_col(c)
+            if "CODIGO" in n and "PROVEEDOR" in n: rename[c]="CODIGO PROVEEDOR"
+            elif n=="MOQ": rename[c]="MOQ"
+            elif n=="ETA": rename[c]="ETA"
+            elif n in {"NOMBRE","PROVEEDOR","SUPPLIER"}: rename[c]="NOMBRE"
+        df=df.rename(columns=rename)
+        for c in ["CODIGO PROVEEDOR","MOQ","ETA","NOMBRE"]:
+            if c not in df.columns: df[c]=pd.NA
+        df["_NOMBRE_N"]=df["NOMBRE"].map(_clean_master_name)
+        return df[["CODIGO PROVEEDOR","MOQ","ETA","NOMBRE","_NOMBRE_N"]]
+    except Exception:
+        return pd.DataFrame(columns=["CODIGO PROVEEDOR","MOQ","ETA","NOMBRE","_NOMBRE_N"])
+
+def supplier_defaults(provider,master):
+    target=SUPPLIER_MASTER_ALIASES.get(provider,provider)
+    if master.empty: return "",None,None
+    hit=master[master["_NOMBRE_N"]==_clean_master_name(target)]
+    if hit.empty: return "",None,None
+    r=hit.iloc[0]
+    return safe_text(r.get("CODIGO PROVEEDOR")),clean_qty(r.get("MOQ")),clean_qty(r.get("ETA"))
+
+def normalize_category_name(v):
+    s=re.sub(r"^[^A-Za-z0-9]+","",safe_text(v)).strip()
+    return s.upper() if s else "OTHER"
+
+def base_item(sku):
+    return re.sub(r"_[A-Z0-9]{2,6}$","",safe_text(sku).upper().strip())
+
+def public_stock(stock):
+    q=clean_qty(stock)
+    if q is None or q<=0: return ""
+    if q>100: return "100+"
+    if q>20: return "20+"
+    return str(int(q)) if float(q).is_integer() else str(q)
+
+def prepare_offers(df_all,master):
+    df=df_all.copy()
+    df["Categoria"]=df.apply(lambda r:normalize_category_name(clasificar_categoria(r["Descripcion"],r["SKU"],r.get("Condicion",""))),axis=1)
+    specs=df.apply(lambda r:extraer_especificaciones(f'{r["Descripcion"]} {r["SKU"]}'),axis=1)
+    specs.columns=["Procesador","RAM","Almacenamiento","Pantalla"]
+    df[["Procesador","RAM","Almacenamiento","Pantalla"]]=specs
+    df["ITEM_BASE"]=df["SKU"].map(base_item)
+    codes=[]; moqs=[]; etas=[]; full=[]
+    for _,r in df.iterrows():
+        code,dm,de=supplier_defaults(r["Proveedor"],master)
+        rm=clean_qty(r.get("MOQ")); re_=safe_text(r.get("ETA"))
+        m=rm if rm is not None else dm
+        e=re_ if re_ else (int(de) if de is not None else "")
+        codes.append(code); moqs.append(m); etas.append(e)
+        full.append(f'{base_item(r["SKU"])}_{code}' if code else base_item(r["SKU"]))
+    df["Codigo_Proveedor"]=codes; df["MOQ_Final"]=moqs; df["ETA_Final"]=etas; df["ITEM_PUBLICO"]=full
+    df["Stock_Real"]=pd.to_numeric(df["Stock"],errors="coerce")
+    df["Costo"]=pd.to_numeric(df["Precio"],errors="coerce")
+    df["Condicion_Normalizada"]=df["Condicion"].fillna("").astype(str).str.upper().str.strip().replace({"":"NEW"})
+    df["Elegible_Stock"]=df["Stock_Real"].fillna(0)>20
+    moq_num=pd.to_numeric(df["MOQ_Final"],errors="coerce")
+    df["Elegible_MOQ"]=moq_num.isna()|(moq_num<=df["Stock_Real"].fillna(0))
+    df["Elegible"]=df["Elegible_Stock"]&df["Elegible_MOQ"]&df["Costo"].notna()
+    key_cols=["ITEM_BASE","Condicion_Normalizada","Procesador","RAM","Almacenamiento","Pantalla"]
+    for c in key_cols: df[c]=df[c].fillna("").astype(str).str.upper().str.strip()
+    df["PRODUCT_KEY"]=df[key_cols].agg("|".join,axis=1)
+    return df
+
+def select_winners(offers):
+    eligible=offers[offers["Elegible"]].copy()
+    winners=[]; alternatives={}
+    for key,g in eligible.groupby("PRODUCT_KEY",dropna=False):
+        ordered=g.sort_values(["Costo","Stock_Real"],ascending=[True,False]).reset_index(drop=True)
+        if ordered.empty: continue
+        w=ordered.iloc[0].copy(); w["Stock_Publico"]=public_stock(w["Stock_Real"]); w["Alternativas"]=max(len(ordered)-1,0)
+        winners.append(w.to_dict()); alternatives[key]=ordered
+    return pd.DataFrame(winners),alternatives
+
+app_dir=Path(__file__).resolve().parent
+logo_path=next((p for p in [app_dir/"logo.png",app_dir/"Logo.png",Path.cwd()/"logo.png"] if p.exists()),None)
+if logo_path:
+    c1,c2=st.columns([0.7,5.3],vertical_alignment="center")
+    with c1: st.image(str(logo_path),width=84)
+    with c2:
+        st.markdown('<div class="main-header">Motech Miami — Price List Manager</div>',unsafe_allow_html=True)
+        st.markdown('<div class="sub-header">Panel interno · Importación, selección de proveedor y preparación de la lista pública</div>',unsafe_allow_html=True)
+else:
+    st.markdown('<div class="main-header">Motech Miami — Price List Manager</div>',unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Panel interno · Importación, selección de proveedor y preparación de la lista pública</div>',unsafe_allow_html=True)
+
+master=load_supplier_master()
+with st.sidebar:
+    st.header("Carga diaria")
+    uploaded_files=st.file_uploader("Subir listas Excel de proveedores",type=["xlsx","xls"],accept_multiple_files=True)
+    if master.empty: st.warning("No se encontró supplier_master.xlsx. MOQ/ETA/código se usarán solo si vienen en el archivo.")
+    else: st.success(f"Maestro de proveedores cargado: {len(master)} registros")
+    st.caption("In Transit no se utiliza como stock disponible.")
+if not uploaded_files:
+    st.info("Sube las listas de proveedores para comenzar la actualización diaria."); st.stop()
+frames=[]; logs=[]
+for f in uploaded_files:
+    d,info=parse_uploaded(f)
+    if d.empty:
+        info["Estado"]="⚠️ Verificar archivo Excel"
+        if not info.get("Detalle"): info["Detalle"]="No se importaron productos de este archivo."
+    else: frames.append(d)
+    logs.append(info)
+log_df=pd.DataFrame(logs)
+if not frames:
+    st.error("No hay productos válidos para procesar. Verifica los archivos Excel."); st.dataframe(log_df,use_container_width=True,hide_index=True); st.stop()
+df_all=pd.concat(frames,ignore_index=True)
+offers=prepare_offers(df_all,master)
+winners,alternatives=select_winners(offers)
+valid_files=int((log_df["Productos"]>0).sum()); review_files=int((log_df["Productos"]<=0).sum())
+kpi_html=(f'<div class="kpi-strip"><div class="kpi-box"><div class="kpi-value">{valid_files}</div><div class="kpi-label">Archivos válidos</div></div>'
+          f'<div class="kpi-box"><div class="kpi-value">{len(offers):,}</div><div class="kpi-label">Ofertas normalizadas</div></div>'
+          f'<div class="kpi-box"><div class="kpi-value">{len(winners):,}</div><div class="kpi-label">Productos elegibles</div></div>'
+          f'<div class="kpi-box"><div class="kpi-value">{review_files}</div><div class="kpi-label">Archivos a revisar</div></div></div>')
+st.markdown(kpi_html,unsafe_allow_html=True)
+page=st.radio("Sección",["Productos","Resultado de importación","Revisión requerida"],horizontal=True,label_visibility="collapsed")
+if page=="Resultado de importación":
+    st.subheader("Resultado de importación"); st.dataframe(log_df,use_container_width=True,hide_index=True)
+    if not log_df[log_df["Productos"]<=0].empty: st.warning("Los archivos marcados para revisión no aportaron productos al borrador.")
+    st.stop()
+if page=="Revisión requerida":
+    st.subheader("Revisión requerida")
+    issues=offers[~offers["Elegible"]].copy()
+    if issues.empty: st.success("No hay productos con problemas de elegibilidad en esta carga.")
+    else:
+        issues["Motivo"]=""
+        issues.loc[~issues["Elegible_Stock"],"Motivo"]+="Stock <= 20; "
+        issues.loc[~issues["Elegible_MOQ"],"Motivo"]+="MOQ mayor que stock; "
+        v=issues[["Proveedor","ITEM_PUBLICO","Descripcion","Stock_Real","Costo","MOQ_Final","ETA_Final","Motivo"]].copy()
+        v.columns=["Proveedor","ITEM","Descripción","Stock","Costo","MOQ","ETA","Motivo"]
+        st.dataframe(v,use_container_width=True,hide_index=True)
+    st.stop()
+st.subheader("Productos seleccionados")
+if winners.empty:
+    st.warning("No hay productos que cumplan las reglas actuales (stock > 20 y MOQ <= stock)."); st.stop()
+search=st.text_input("Buscar",placeholder="ITEM, modelo, descripción, procesador, RAM...")
+fc=st.columns(3)
+with fc[0]:
+    cats=["TODAS"]+sorted(x for x in winners["Categoria"].dropna().unique().tolist() if x); cat=st.selectbox("Categoría",cats)
+with fc[1]:
+    providers=["TODOS"]+sorted(winners["Proveedor"].dropna().unique().tolist()); prov=st.selectbox("Proveedor seleccionado",providers)
+with fc[2]:
+    conditions=["TODAS"]+sorted(winners["Condicion_Normalizada"].dropna().unique().tolist()); condition=st.selectbox("Condición",conditions)
+view=winners.copy()
+if cat!="TODAS": view=view[view["Categoria"]==cat]
+if prov!="TODOS": view=view[view["Proveedor"]==prov]
+if condition!="TODAS": view=view[view["Condicion_Normalizada"]==condition]
+if search.strip():
+    q=search.strip().upper(); hay=(view["ITEM_PUBLICO"].astype(str)+" "+view["Descripcion"].astype(str)+" "+view["Procesador"].astype(str)+" "+view["RAM"].astype(str)+" "+view["Almacenamiento"].astype(str)).str.upper()
+    view=view[hay.str.contains(re.escape(q),na=False)]
+show=view[["Categoria","ITEM_PUBLICO","Descripcion","Proveedor","Stock_Real","Stock_Publico","Costo","MOQ_Final","ETA_Final","Procesador","RAM","Almacenamiento","Pantalla","Alternativas"]].copy()
+show.columns=["Categoría","ITEM","Descripción","Proveedor elegido","Stock real","Stock público","Costo","MOQ","ETA","Procesador","RAM","Almacenamiento","Pantalla","Otros proveedores"]
+st.dataframe(show,use_container_width=True,hide_index=True,column_config={"Costo":st.column_config.NumberColumn(format="$%.2f")})
+st.divider(); st.markdown("#### Ver proveedores de un producto")
+labels={f'{r["ITEM_PUBLICO"]} — {safe_text(r["Descripcion"])[:75]}':r["PRODUCT_KEY"] for _,r in view.iterrows()}
+if labels:
+    selected=st.selectbox("Producto",list(labels.keys())); opts=alternatives.get(labels[selected],pd.DataFrame()).copy()
+    if not opts.empty:
+        opts["Seleccionado"]=False; opts.loc[0,"Seleccionado"]=True
+        av=opts[["Seleccionado","Proveedor","ITEM_PUBLICO","Stock_Real","Costo","MOQ_Final","ETA_Final"]].copy(); av.columns=["Seleccionado","Proveedor","ITEM","Stock","Costo","MOQ","ETA"]
+        st.dataframe(av,use_container_width=True,hide_index=True,column_config={"Costo":st.column_config.NumberColumn(format="$%.2f")})
+        first=opts.iloc[0]
+        if len(opts)>1 and (opts.iloc[1:]["Stock_Real"]>=2*first["Stock_Real"]).any(): st.info("Hay una alternativa con al menos el doble de stock.")
+        wm=clean_qty(first["MOQ_Final"]); om=pd.to_numeric(opts.iloc[1:]["MOQ_Final"],errors="coerce") if len(opts)>1 else pd.Series(dtype=float)
+        if wm is not None and not om.dropna().empty and om.min()<wm: st.info("Hay una alternativa con MOQ más flexible.")
+st.caption("MVP 1: este borrador todavía no publica precios al cliente. Primero validaremos selección, equivalencias y proveedores alternativos.")
