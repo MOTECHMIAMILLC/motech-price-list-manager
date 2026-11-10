@@ -40,10 +40,5 @@ jobs:
           actual = hashlib.sha256(source.encode("utf-8")).hexdigest()
           assert actual == expected, (actual, expected)
           compile(source, "Motech_Price_List_Manager.py", "exec")
-          import pandas as pd
-          m = pd.read_excel("supplier_master.xlsx")
-          print("=== SUPPLIER MASTER MOQ CHECK ===")
-          print(m.to_string(index=False))
-          print("=== END MASTER MOQ CHECK ===")
           print("Validation OK")
           PY
