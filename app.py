@@ -100,4 +100,134 @@ if _disabled_old not in source:
     raise RuntimeError("Publication button target not found.")
 source = source.replace(_disabled_old, _disabled_new)
 
+
+# Configurable margin rules stored in app_settings.
+_margin_func_old = '''def default_margin_pct(category, cost):
+    cat=safe_text(category).upper()
+    if "LAPTOP" in cat or "NOTEBOOK" in cat or "DESKTOP" in cat:
+        return 2.0
+    return None
+'''
+_margin_func_new = '''def load_margin_rules():
+    import json
+    raw=get_setting("margin_rules_json","")
+    if raw:
+        try:
+            data=json.loads(raw)
+            if isinstance(data,list):
+                return data
+        except Exception:
+            pass
+    return [
+        {"Categoria":"LAPTOPS","Costo_Min":0.0,"Costo_Max":999999.0,"Margen_Pct":2.0},
+        {"Categoria":"DESKTOPS & PC","Costo_Min":0.0,"Costo_Max":999999.0,"Margen_Pct":2.0},
+    ]
+
+
+def default_margin_pct(category, cost):
+    cat=safe_text(category).upper().strip()
+    try:
+        c=float(cost)
+    except Exception:
+        c=None
+    if c is not None:
+        for rule in load_margin_rules():
+            rcat=safe_text(rule.get("Categoria")).upper().strip()
+            try:
+                mn=float(rule.get("Costo_Min",0) or 0)
+                mx=float(rule.get("Costo_Max",999999) or 999999)
+                pct=float(rule.get("Margen_Pct"))
+            except Exception:
+                continue
+            category_match=(rcat in {"*","TODAS","TODOS","ALL"}) or (rcat==cat) or (rcat and (rcat in cat or cat in rcat))
+            if category_match and mn <= c <= mx:
+                return pct
+    # Business baseline already defined for computers.
+    if "LAPTOP" in cat or "NOTEBOOK" in cat or "DESKTOP" in cat:
+        return 2.0
+    return None
+
+
+def render_margin_config(prefix="margin_cfg"):
+    import json
+    st.markdown("#### Reglas de margen")
+    st.caption("Define márgenes automáticos por categoría y rango de costo. El precio o margen manual de un producto siempre tiene prioridad.")
+    rules=load_margin_rules()
+    cols=["Categoria","Costo_Min","Costo_Max","Margen_Pct"]
+    df=pd.DataFrame(rules)
+    for col in cols:
+        if col not in df.columns:
+            df[col]=None
+    edited=st.data_editor(
+        df[cols],
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        key=f"{prefix}_editor",
+        column_config={
+            "Categoria":st.column_config.TextColumn("Categoría"),
+            "Costo_Min":st.column_config.NumberColumn("Costo mínimo",min_value=0.0,format="$%.2f"),
+            "Costo_Max":st.column_config.NumberColumn("Costo máximo",min_value=0.0,format="$%.2f"),
+            "Margen_Pct":st.column_config.NumberColumn("Margen %",min_value=0.0,max_value=100.0,format="%.2f%%"),
+        },
+    )
+    if st.button("Guardar reglas de margen",type="primary",key=f"{prefix}_save"):
+        clean=[]
+        errors=[]
+        for idx,row in edited.iterrows():
+            cat=safe_text(row.get("Categoria")).strip()
+            if not cat:
+                continue
+            try:
+                mn=float(row.get("Costo_Min") if pd.notna(row.get("Costo_Min")) else 0)
+                mx=float(row.get("Costo_Max") if pd.notna(row.get("Costo_Max")) else 999999)
+                pct=float(row.get("Margen_Pct"))
+            except Exception:
+                errors.append(f"Fila {idx+1}: valores incompletos.")
+                continue
+            if mn < 0 or mx < mn or pct < 0:
+                errors.append(f"Fila {idx+1}: revisa rango y margen.")
+                continue
+            clean.append({"Categoria":cat,"Costo_Min":mn,"Costo_Max":mx,"Margen_Pct":pct})
+        if errors:
+            st.error(" ".join(errors))
+        elif not clean:
+            st.error("Debes conservar al menos una regla de margen.")
+        else:
+            set_setting("margin_rules_json",json.dumps(clean,ensure_ascii=False))
+            st.success("Reglas de margen guardadas. El borrador se recalculará con los nuevos márgenes.")
+            st.rerun()
+'''
+if _margin_func_old not in source:
+    raise RuntimeError("Margin function target not found.")
+source=source.replace(_margin_func_old,_margin_func_new)
+
+_cfg_empty_old='''    else:
+        st.subheader("Configuración")
+        st.markdown("#### Contraseña de clientes")
+'''
+_cfg_empty_new='''    else:
+        st.subheader("Configuración")
+        render_margin_config("cfg_empty_margin")
+        st.divider()
+        st.markdown("#### Contraseña de clientes")
+'''
+if _cfg_empty_old not in source:
+    raise RuntimeError("Empty-state configuration target not found.")
+source=source.replace(_cfg_empty_old,_cfg_empty_new,1)
+
+_cfg_main_old='''if page=="Configuración":
+    st.subheader("Configuración")
+    st.markdown("#### Contraseña de clientes")
+'''
+_cfg_main_new='''if page=="Configuración":
+    st.subheader("Configuración")
+    render_margin_config("cfg_main_margin")
+    st.divider()
+    st.markdown("#### Contraseña de clientes")
+'''
+if _cfg_main_old not in source:
+    raise RuntimeError("Main configuration target not found.")
+source=source.replace(_cfg_main_old,_cfg_main_new,1)
+
 exec(compile(source, "Motech_Price_List_Manager.py", "exec"), globals(), globals())
