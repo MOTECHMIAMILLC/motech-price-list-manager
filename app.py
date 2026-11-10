@@ -804,7 +804,8 @@ def parse_uploaded(uploaded) -> Tuple[pd.DataFrame, dict]:
 
 
 # ============================================================
-# PRICE LIST MANAGER — MVP 1
+# PRICE LIST MANAGER — MVP 2
+# Precio manual + ocultar/mostrar + proveedores alternativos
 # ============================================================
 SUPPLIER_MASTER_ALIASES = {
     "H&Z": "H&Z", "SUNRISE": "SUNRISE INTERNATIONAL", "ALL PLUS": "ALLPLUS",
@@ -814,8 +815,17 @@ SUPPLIER_MASTER_ALIASES = {
     "203_TRADING": "203 TRADING", "EMOLO": "EMOLO", "PRT": "PRT",
 }
 
+if "manual_prices" not in st.session_state:
+    st.session_state.manual_prices = {}
+if "manual_margins" not in st.session_state:
+    st.session_state.manual_margins = {}
+if "hidden_products" not in st.session_state:
+    st.session_state.hidden_products = set()
+
+
 def _clean_master_name(v):
     return re.sub(r"\s+", " ", safe_text(v).strip()).upper()
+
 
 def load_supplier_master():
     candidates=[Path(__file__).resolve().parent/"supplier_master.xlsx",Path.cwd()/"supplier_master.xlsx"]
@@ -839,6 +849,7 @@ def load_supplier_master():
     except Exception:
         return pd.DataFrame(columns=["CODIGO PROVEEDOR","MOQ","ETA","NOMBRE","_NOMBRE_N"])
 
+
 def supplier_defaults(provider,master):
     target=SUPPLIER_MASTER_ALIASES.get(provider,provider)
     if master.empty: return "",None,None
@@ -847,12 +858,15 @@ def supplier_defaults(provider,master):
     r=hit.iloc[0]
     return safe_text(r.get("CODIGO PROVEEDOR")),clean_qty(r.get("MOQ")),clean_qty(r.get("ETA"))
 
+
 def normalize_category_name(v):
     s=re.sub(r"^[^A-Za-z0-9]+","",safe_text(v)).strip()
     return s.upper() if s else "OTHER"
 
+
 def base_item(sku):
     return re.sub(r"_[A-Z0-9]{2,6}$","",safe_text(sku).upper().strip())
+
 
 def public_stock(stock):
     q=clean_qty(stock)
@@ -860,6 +874,15 @@ def public_stock(stock):
     if q>100: return "100+"
     if q>20: return "20+"
     return str(int(q)) if float(q).is_integer() else str(q)
+
+
+def default_margin_pct(category, cost):
+    cat=safe_text(category).upper()
+    if "LAPTOP" in cat or "NOTEBOOK" in cat or "DESKTOP" in cat:
+        return 2.0
+    # Los demás porcentajes (6/7/10) se definirán después por rango/categoría.
+    return None
+
 
 def prepare_offers(df_all,master):
     df=df_all.copy()
@@ -889,15 +912,29 @@ def prepare_offers(df_all,master):
     df["PRODUCT_KEY"]=df[key_cols].agg("|".join,axis=1)
     return df
 
+
 def select_winners(offers):
     eligible=offers[offers["Elegible"]].copy()
     winners=[]; alternatives={}
     for key,g in eligible.groupby("PRODUCT_KEY",dropna=False):
         ordered=g.sort_values(["Costo","Stock_Real"],ascending=[True,False]).reset_index(drop=True)
         if ordered.empty: continue
-        w=ordered.iloc[0].copy(); w["Stock_Publico"]=public_stock(w["Stock_Real"]); w["Alternativas"]=max(len(ordered)-1,0)
+        w=ordered.iloc[0].copy()
+        w["Stock_Publico"]=public_stock(w["Stock_Real"])
+        w["Alternativas"]=max(len(ordered)-1,0)
+        margin=st.session_state.manual_margins.get(key)
+        if margin is None:
+            margin=default_margin_pct(w.get("Categoria"),w.get("Costo"))
+        w["Margen_Pct"]=margin
+        suggested=(float(w["Costo"])*(1+float(margin)/100)) if margin is not None and pd.notna(w["Costo"]) else None
+        w["Precio_Sugerido"]=suggested
+        manual=st.session_state.manual_prices.get(key)
+        w["Precio_Publicado"]=float(manual) if manual is not None else suggested
+        w["Precio_Manual"]=manual is not None
+        w["Oculto"]=key in st.session_state.hidden_products
         winners.append(w.to_dict()); alternatives[key]=ordered
     return pd.DataFrame(winners),alternatives
+
 
 app_dir=Path(__file__).resolve().parent
 logo_path=next((p for p in [app_dir/"logo.png",app_dir/"Logo.png",Path.cwd()/"logo.png"] if p.exists()),None)
@@ -918,76 +955,179 @@ with st.sidebar:
     if master.empty: st.warning("No se encontró supplier_master.xlsx. MOQ/ETA/código se usarán solo si vienen en el archivo.")
     else: st.success(f"Maestro de proveedores cargado: {len(master)} registros")
     st.caption("In Transit no se utiliza como stock disponible.")
+    st.divider()
+    st.caption("MVP 2 · Los ajustes manuales se conservan durante la sesión actual. La persistencia definitiva se añadirá con la base de datos.")
+
 if not uploaded_files:
     st.info("Sube las listas de proveedores para comenzar la actualización diaria."); st.stop()
+
 frames=[]; logs=[]
 for f in uploaded_files:
     d,info=parse_uploaded(f)
     if d.empty:
         info["Estado"]="⚠️ Verificar archivo Excel"
         if not info.get("Detalle"): info["Detalle"]="No se importaron productos de este archivo."
-    else: frames.append(d)
+    else:
+        frames.append(d)
     logs.append(info)
+
 log_df=pd.DataFrame(logs)
 if not frames:
-    st.error("No hay productos válidos para procesar. Verifica los archivos Excel."); st.dataframe(log_df,use_container_width=True,hide_index=True); st.stop()
+    st.error("No hay productos válidos para procesar. Verifica los archivos Excel.")
+    st.dataframe(log_df,use_container_width=True,hide_index=True)
+    st.stop()
+
 df_all=pd.concat(frames,ignore_index=True)
 offers=prepare_offers(df_all,master)
 winners,alternatives=select_winners(offers)
+
 valid_files=int((log_df["Productos"]>0).sum()); review_files=int((log_df["Productos"]<=0).sum())
+hidden_count=int(winners["Oculto"].sum()) if not winners.empty and "Oculto" in winners else 0
+manual_count=int(winners["Precio_Manual"].sum()) if not winners.empty and "Precio_Manual" in winners else 0
 kpi_html=(f'<div class="kpi-strip"><div class="kpi-box"><div class="kpi-value">{valid_files}</div><div class="kpi-label">Archivos válidos</div></div>'
-          f'<div class="kpi-box"><div class="kpi-value">{len(offers):,}</div><div class="kpi-label">Ofertas normalizadas</div></div>'
-          f'<div class="kpi-box"><div class="kpi-value">{len(winners):,}</div><div class="kpi-label">Productos elegibles</div></div>'
-          f'<div class="kpi-box"><div class="kpi-value">{review_files}</div><div class="kpi-label">Archivos a revisar</div></div></div>')
+          f'<div class="kpi-box"><div class="kpi-value">{len(winners):,}</div><div class="kpi-label">Productos seleccionados</div></div>'
+          f'<div class="kpi-box"><div class="kpi-value">{manual_count}</div><div class="kpi-label">Precios manuales</div></div>'
+          f'<div class="kpi-box"><div class="kpi-value">{hidden_count}</div><div class="kpi-label">Productos ocultos</div></div></div>')
 st.markdown(kpi_html,unsafe_allow_html=True)
+
 page=st.radio("Sección",["Productos","Resultado de importación","Revisión requerida"],horizontal=True,label_visibility="collapsed")
+
 if page=="Resultado de importación":
-    st.subheader("Resultado de importación"); st.dataframe(log_df,use_container_width=True,hide_index=True)
-    if not log_df[log_df["Productos"]<=0].empty: st.warning("Los archivos marcados para revisión no aportaron productos al borrador.")
+    st.subheader("Resultado de importación")
+    st.dataframe(log_df,use_container_width=True,hide_index=True)
+    if not log_df[log_df["Productos"]<=0].empty:
+        st.warning("Los archivos marcados para revisión no aportaron productos al borrador.")
     st.stop()
+
 if page=="Revisión requerida":
     st.subheader("Revisión requerida")
     issues=offers[~offers["Elegible"]].copy()
-    if issues.empty: st.success("No hay productos con problemas de elegibilidad en esta carga.")
+    if issues.empty:
+        st.success("No hay productos con problemas de elegibilidad en esta carga.")
     else:
         issues["Motivo"]=""
         issues.loc[~issues["Elegible_Stock"],"Motivo"]+="Stock <= 20; "
         issues.loc[~issues["Elegible_MOQ"],"Motivo"]+="MOQ mayor que stock; "
         v=issues[["Proveedor","ITEM_PUBLICO","Descripcion","Stock_Real","Costo","MOQ_Final","ETA_Final","Motivo"]].copy()
         v.columns=["Proveedor","ITEM","Descripción","Stock","Costo","MOQ","ETA","Motivo"]
-        st.dataframe(v,use_container_width=True,hide_index=True)
+        st.dataframe(v,use_container_width=True,hide_index=True,
+                     column_config={"Costo":st.column_config.NumberColumn(format="$%.2f")})
     st.stop()
+
 st.subheader("Productos seleccionados")
 if winners.empty:
     st.warning("No hay productos que cumplan las reglas actuales (stock > 20 y MOQ <= stock)."); st.stop()
+
 search=st.text_input("Buscar",placeholder="ITEM, modelo, descripción, procesador, RAM...")
-fc=st.columns(3)
+fc=st.columns(4)
 with fc[0]:
     cats=["TODAS"]+sorted(x for x in winners["Categoria"].dropna().unique().tolist() if x); cat=st.selectbox("Categoría",cats)
 with fc[1]:
     providers=["TODOS"]+sorted(winners["Proveedor"].dropna().unique().tolist()); prov=st.selectbox("Proveedor seleccionado",providers)
 with fc[2]:
     conditions=["TODAS"]+sorted(winners["Condicion_Normalizada"].dropna().unique().tolist()); condition=st.selectbox("Condición",conditions)
+with fc[3]:
+    visibility=st.selectbox("Visibilidad",["TODOS","VISIBLES","OCULTOS"])
+
 view=winners.copy()
 if cat!="TODAS": view=view[view["Categoria"]==cat]
 if prov!="TODOS": view=view[view["Proveedor"]==prov]
 if condition!="TODAS": view=view[view["Condicion_Normalizada"]==condition]
+if visibility=="VISIBLES": view=view[~view["Oculto"]]
+elif visibility=="OCULTOS": view=view[view["Oculto"]]
 if search.strip():
-    q=search.strip().upper(); hay=(view["ITEM_PUBLICO"].astype(str)+" "+view["Descripcion"].astype(str)+" "+view["Procesador"].astype(str)+" "+view["RAM"].astype(str)+" "+view["Almacenamiento"].astype(str)).str.upper()
+    q=search.strip().upper()
+    hay=(view["ITEM_PUBLICO"].astype(str)+" "+view["Descripcion"].astype(str)+" "+view["Procesador"].astype(str)+" "+view["RAM"].astype(str)+" "+view["Almacenamiento"].astype(str)).str.upper()
     view=view[hay.str.contains(re.escape(q),na=False)]
-show=view[["Categoria","ITEM_PUBLICO","Descripcion","Proveedor","Stock_Real","Stock_Publico","Costo","MOQ_Final","ETA_Final","Procesador","RAM","Almacenamiento","Pantalla","Alternativas"]].copy()
-show.columns=["Categoría","ITEM","Descripción","Proveedor elegido","Stock real","Stock público","Costo","MOQ","ETA","Procesador","RAM","Almacenamiento","Pantalla","Otros proveedores"]
-st.dataframe(show,use_container_width=True,hide_index=True,column_config={"Costo":st.column_config.NumberColumn(format="$%.2f")})
-st.divider(); st.markdown("#### Ver proveedores de un producto")
-labels={f'{r["ITEM_PUBLICO"]} — {safe_text(r["Descripcion"])[:75]}':r["PRODUCT_KEY"] for _,r in view.iterrows()}
-if labels:
-    selected=st.selectbox("Producto",list(labels.keys())); opts=alternatives.get(labels[selected],pd.DataFrame()).copy()
-    if not opts.empty:
-        opts["Seleccionado"]=False; opts.loc[0,"Seleccionado"]=True
-        av=opts[["Seleccionado","Proveedor","ITEM_PUBLICO","Stock_Real","Costo","MOQ_Final","ETA_Final"]].copy(); av.columns=["Seleccionado","Proveedor","ITEM","Stock","Costo","MOQ","ETA"]
-        st.dataframe(av,use_container_width=True,hide_index=True,column_config={"Costo":st.column_config.NumberColumn(format="$%.2f")})
+
+show=view[["Oculto","Categoria","ITEM_PUBLICO","Descripcion","Proveedor","Stock_Real","Stock_Publico","Costo","Margen_Pct","Precio_Sugerido","Precio_Publicado","Precio_Manual","MOQ_Final","ETA_Final","Alternativas"]].copy()
+show.columns=["Oculto","Categoría","ITEM","Descripción","Proveedor elegido","Stock real","Stock público","Costo","Margen %","Precio sugerido","Precio publicado","Manual","MOQ","ETA","Otros proveedores"]
+st.dataframe(show,use_container_width=True,hide_index=True,
+             column_config={
+                 "Costo":st.column_config.NumberColumn(format="$%.2f"),
+                 "Precio sugerido":st.column_config.NumberColumn(format="$%.2f"),
+                 "Precio publicado":st.column_config.NumberColumn(format="$%.2f"),
+                 "Margen %":st.column_config.NumberColumn(format="%.2f%%"),
+             })
+
+st.divider()
+st.markdown("### Ajustar producto")
+labels={f'{r["ITEM_PUBLICO"]} — {safe_text(r["Descripcion"])[:82]}':r["PRODUCT_KEY"] for _,r in view.iterrows()}
+if not labels:
+    st.info("No hay productos con los filtros actuales.")
+    st.stop()
+
+selected_label=st.selectbox("Producto",list(labels.keys()))
+key=labels[selected_label]
+selected_row=winners[winners["PRODUCT_KEY"]==key].iloc[0]
+opts=alternatives.get(key,pd.DataFrame()).copy()
+
+left,right=st.columns([1.15,1])
+with left:
+    st.markdown("#### Oferta seleccionada")
+    st.write(f'**ITEM:** {selected_row["ITEM_PUBLICO"]}')
+    st.write(f'**Proveedor:** {selected_row["Proveedor"]}')
+    st.write(f'**Stock real:** {int(selected_row["Stock_Real"])}  ·  **Stock público:** {selected_row["Stock_Publico"]}')
+    st.write(f'**Costo:** ${float(selected_row["Costo"]):,.2f}  ·  **MOQ:** {selected_row["MOQ_Final"]}  ·  **ETA:** {selected_row["ETA_Final"]}')
+    st.caption(safe_text(selected_row["Descripcion"]))
+
+    if not opts.empty and len(opts)>1:
+        st.markdown("#### Otros proveedores")
+        alt=opts.copy()
+        alt["Seleccionado"]=[True]+[False]*(len(alt)-1)
+        av=alt[["Seleccionado","Proveedor","ITEM_PUBLICO","Stock_Real","Costo","MOQ_Final","ETA_Final"]].copy()
+        av.columns=["Seleccionado","Proveedor","ITEM","Stock","Costo","MOQ","ETA"]
+        st.dataframe(av,use_container_width=True,hide_index=True,
+                     column_config={"Costo":st.column_config.NumberColumn(format="$%.2f")})
         first=opts.iloc[0]
-        if len(opts)>1 and (opts.iloc[1:]["Stock_Real"]>=2*first["Stock_Real"]).any(): st.info("Hay una alternativa con al menos el doble de stock.")
-        wm=clean_qty(first["MOQ_Final"]); om=pd.to_numeric(opts.iloc[1:]["MOQ_Final"],errors="coerce") if len(opts)>1 else pd.Series(dtype=float)
-        if wm is not None and not om.dropna().empty and om.min()<wm: st.info("Hay una alternativa con MOQ más flexible.")
-st.caption("MVP 1: este borrador todavía no publica precios al cliente. Primero validaremos selección, equivalencias y proveedores alternativos.")
+        if (opts.iloc[1:]["Stock_Real"]>=2*first["Stock_Real"]).any():
+            st.info("Alternativa con mayor stock disponible: existe otro proveedor con al menos el doble de stock.")
+        wm=clean_qty(first["MOQ_Final"]); om=pd.to_numeric(opts.iloc[1:]["MOQ_Final"],errors="coerce")
+        if wm is not None and not om.dropna().empty and om.min()<wm:
+            st.info("MOQ más flexible disponible en otro proveedor.")
+    else:
+        st.caption("No hay otros proveedores elegibles para este producto.")
+
+with right:
+    st.markdown("#### Precio y visibilidad")
+    current_margin=st.session_state.manual_margins.get(key)
+    if current_margin is None:
+        current_margin=default_margin_pct(selected_row.get("Categoria"),selected_row.get("Costo"))
+    margin_default=float(current_margin) if current_margin is not None else 0.0
+    margin=st.number_input("Margen %",min_value=0.0,max_value=100.0,value=margin_default,step=0.5,key=f"margin_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    suggested=float(selected_row["Costo"])*(1+margin/100)
+    st.metric("Precio sugerido",f"${suggested:,.2f}")
+    existing_manual=st.session_state.manual_prices.get(key)
+    price_default=float(existing_manual) if existing_manual is not None else float(suggested)
+    published=st.number_input("Precio publicado",min_value=0.01,value=price_default,step=1.0,format="%.2f",key=f"price_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    hidden=key in st.session_state.hidden_products
+    hidden_input=st.checkbox("Ocultar este producto de la lista pública",value=hidden,key=f"hidden_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+
+    csave,creset=st.columns(2)
+    with csave:
+        if st.button("Guardar cambios",type="primary",use_container_width=True):
+            st.session_state.manual_margins[key]=float(margin)
+            # Se considera override manual solo si difiere del sugerido.
+            if abs(float(published)-float(suggested))>0.005:
+                st.session_state.manual_prices[key]=float(published)
+            else:
+                st.session_state.manual_prices.pop(key,None)
+            if hidden_input:
+                st.session_state.hidden_products.add(key)
+            else:
+                st.session_state.hidden_products.discard(key)
+            st.success("Cambios guardados en el borrador de esta sesión.")
+            st.rerun()
+    with creset:
+        if st.button("Restablecer",use_container_width=True):
+            st.session_state.manual_prices.pop(key,None)
+            st.session_state.manual_margins.pop(key,None)
+            st.session_state.hidden_products.discard(key)
+            st.rerun()
+
+    if existing_manual is not None:
+        st.warning("Precio modificado manualmente.")
+    if hidden:
+        st.warning("Este producto está oculto y no deberá publicarse.")
+
+st.caption("MVP 2: edición manual de precio, margen y visibilidad + comparación de proveedores. Los cambios aún son de borrador y no se publican al cliente.")
