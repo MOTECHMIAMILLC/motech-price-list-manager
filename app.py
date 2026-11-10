@@ -58,4 +58,46 @@ if _moq_old not in source:
     raise RuntimeError("MOQ master fallback target not found.")
 source = source.replace(_moq_old, _moq_new)
 
+
+# First publication bootstrap: do not mark the entire initial catalog as NEW ARRIVAL.
+_newarrival_old = '''        if not hist:
+            new_arrival=True
+'''
+_newarrival_new = '''        if not hist:
+            new_arrival=not latest.empty
+'''
+if _newarrival_old not in source:
+    raise RuntimeError("NEW ARRIVAL bootstrap target not found.")
+source = source.replace(_newarrival_old, _newarrival_new)
+
+# Publication safety: visible products without a published price cannot be published.
+_summary_old = '''    curr_visible=winners[~winners["Oculto"]].copy() if not winners.empty else winners.copy()
+    curr_keys=set(curr_visible["PRODUCT_KEY"].astype(str)) if not curr_visible.empty else set()
+'''
+_summary_new = '''    curr_visible=winners[~winners["Oculto"]].copy() if not winners.empty else winners.copy()
+    missing_price_count=int(curr_visible["Precio_Publicado"].isna().sum()) if (not curr_visible.empty and "Precio_Publicado" in curr_visible.columns) else 0
+    curr_keys=set(curr_visible["PRODUCT_KEY"].astype(str)) if not curr_visible.empty else set()
+'''
+if _summary_old not in source:
+    raise RuntimeError("Publication summary target not found.")
+source = source.replace(_summary_old, _summary_new)
+
+_preview_old = '''    preview_cols=["ITEM_PUBLICO","Descripcion","Proveedor","Stock_Publico","Costo","Precio_Publicado","HOT_DEAL","NEW_ARRIVAL","LOW_STOCK"]
+'''
+_preview_new = '''    if missing_price_count>0:
+        st.error(f"Faltan precios publicados en {missing_price_count} productos visibles. Define margen o precio manual antes de publicar.")
+    preview_cols=["ITEM_PUBLICO","Descripcion","Proveedor","Stock_Publico","Costo","Precio_Publicado","HOT_DEAL","NEW_ARRIVAL","LOW_STOCK"]
+'''
+if _preview_old not in source:
+    raise RuntimeError("Publication preview target not found.")
+source = source.replace(_preview_old, _preview_new)
+
+_disabled_old = '''    disabled=(len(issues)>0) or (not confirm)
+'''
+_disabled_new = '''    disabled=(len(issues)>0) or (missing_price_count>0) or (not confirm)
+'''
+if _disabled_old not in source:
+    raise RuntimeError("Publication button target not found.")
+source = source.replace(_disabled_old, _disabled_new)
+
 exec(compile(source, "Motech_Price_List_Manager.py", "exec"), globals(), globals())
