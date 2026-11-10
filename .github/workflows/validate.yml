@@ -1,0 +1,36 @@
+name: Validate Price List Manager
+
+on:
+  push:
+    branches: [development, main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Verify payload integrity and compile
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import base64, hashlib, lzma
+          parts = []
+          for i in range(1, 6):
+              p = Path("mvp_payload") / f"chunk{i}.txt"
+              assert p.exists(), f"Missing {p}"
+              parts.append(p.read_text().strip())
+          source = lzma.decompress(base64.b64decode("".join(parts))).decode("utf-8")
+          expected = "836399f50ac828bd7f529ec3bc192b7df38e265490bab3ed2d51fa027f883172"
+          actual = hashlib.sha256(source.encode()).hexdigest()
+          assert actual == expected, (actual, expected)
+          compile(source, "Motech_Price_List_Manager.py", "exec")
+          compile(Path("app.py").read_text(), "app.py", "exec")
+          print("Validation OK")
+          PY
