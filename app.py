@@ -38,4 +38,24 @@ if _old not in source:
     raise RuntimeError("Review hotfix target not found.")
 source = source.replace(_old, _new)
 
+# MOQ rule: normally keep the supplier-list MOQ, but if that MOQ is greater
+# than the supplier's available physical stock, fall back to the MOQ from
+# Motech's supplier master. This avoids impossible MOQ conditions while
+# preserving genuine supplier-specific MOQ values when they are usable.
+_moq_old = '''        rm=clean_qty(r.get("MOQ")); re_=safe_text(r.get("ETA"))
+        m=rm if rm is not None else dm
+        e=re_ if re_ else (int(de) if de is not None else "")
+'''
+_moq_new = '''        rm=clean_qty(r.get("MOQ")); re_=safe_text(r.get("ETA"))
+        stock_now=clean_qty(r.get("Stock"))
+        if rm is not None and stock_now is not None and rm > stock_now and dm is not None:
+            m=dm
+        else:
+            m=rm if rm is not None else dm
+        e=re_ if re_ else (int(de) if de is not None else "")
+'''
+if _moq_old not in source:
+    raise RuntimeError("MOQ master fallback target not found.")
+source = source.replace(_moq_old, _moq_new)
+
 exec(compile(source, "Motech_Price_List_Manager.py", "exec"), globals(), globals())
