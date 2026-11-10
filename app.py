@@ -894,11 +894,66 @@ def init_db():
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pub_items_run ON publication_items(run_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_pub_items_product ON publication_items(product_key,published_at)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TEXT NOT NULL
+        )""")
+        existing_cols={r[1] for r in conn.execute("PRAGMA table_info(publication_items)").fetchall()}
+        for col,ctype in [("processor","TEXT"),("ram","TEXT"),("storage","TEXT"),("screen","TEXT")]:
+            if col not in existing_cols:
+                conn.execute(f"ALTER TABLE publication_items ADD COLUMN {col} {ctype}")
         conn.commit()
 
 
 def now_iso():
     return datetime.datetime.now().isoformat(timespec="seconds")
+
+
+def get_setting(key, default=None):
+    with db_conn() as conn:
+        r=conn.execute("SELECT value FROM app_settings WHERE key=?",(key,)).fetchone()
+    return r["value"] if r else default
+
+
+def set_setting(key, value):
+    with db_conn() as conn:
+        conn.execute("""INSERT INTO app_settings(key,value,updated_at) VALUES(?,?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at""",
+            (key,str(value),now_iso()))
+        conn.commit()
+
+
+def _password_hash(password):
+    salt=get_setting("client_password_salt")
+    if not salt:
+        salt=hashlib.sha256(os.urandom(32)).hexdigest()
+        set_setting("client_password_salt",salt)
+    return hashlib.sha256((salt+str(password)).encode("utf-8")).hexdigest()
+
+
+def client_password_is_configured():
+    return bool(get_setting("client_password_hash"))
+
+
+def set_client_password(password):
+    if not password or len(password)<4:
+        raise ValueError("La contraseña debe tener al menos 4 caracteres.")
+    set_setting("client_password_hash",_password_hash(password))
+    version=int(get_setting("client_password_version","0") or 0)+1
+    set_setting("client_password_version",version)
+    return version
+
+
+def verify_client_password(password):
+    expected=get_setting("client_password_hash")
+    if not expected:
+        return False
+    return _password_hash(password)==expected
+
+
+def client_password_version():
+    return int(get_setting("client_password_version","0") or 0)
 
 
 def load_overrides():
@@ -1008,15 +1063,16 @@ def publish_snapshot(df):
             if bool(r.get("Oculto",False)):
                 continue
             conn.execute("""INSERT INTO publication_items
-                (run_id,product_key,item_publico,supplier,cost,published_price,stock_real,stock_publico,moq,eta,category,subcategory,description,condition,hot_deal,new_arrival,low_stock,hidden,published_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(
+                (run_id,product_key,item_publico,supplier,cost,published_price,stock_real,stock_publico,moq,eta,category,subcategory,description,condition,hot_deal,new_arrival,low_stock,hidden,published_at,processor,ram,storage,screen)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(
                 run_id,safe_text(r.get("PRODUCT_KEY")),safe_text(r.get("ITEM_PUBLICO")),safe_text(r.get("Proveedor")),
                 float(r.get("Costo")) if pd.notna(r.get("Costo")) else None,
                 float(r.get("Precio_Publicado")) if pd.notna(r.get("Precio_Publicado")) else None,
                 float(r.get("Stock_Real")) if pd.notna(r.get("Stock_Real")) else None,safe_text(r.get("Stock_Publico")),
                 safe_text(r.get("MOQ_Final")),safe_text(r.get("ETA_Final")),safe_text(r.get("Categoria")),safe_text(r.get("Subcategoria_Manual")),
                 safe_text(r.get("Descripcion")),safe_text(r.get("Condicion_Normalizada")),int(bool(r.get("HOT_DEAL",False))),
-                int(bool(r.get("NEW_ARRIVAL",False))),int(bool(r.get("LOW_STOCK",False))),0,ts))
+                int(bool(r.get("NEW_ARRIVAL",False))),int(bool(r.get("LOW_STOCK",False))),0,ts,
+                safe_text(r.get("Procesador")),safe_text(r.get("RAM")),safe_text(r.get("Almacenamiento")),safe_text(r.get("Pantalla"))))
         conn.commit()
     prune_publication_history(7)
     return run_id,ts
@@ -1331,16 +1387,190 @@ def render_manual_form(form_key, offers=None):
             st.rerun()
 
 
+
+# ============================================================
+# PUBLIC PRICE LIST (ENGLISH)
+# ============================================================
+def infer_public_subcategory(category, description):
+    cat=safe_text(category).upper(); d=safe_text(description).upper()
+    if "LAPTOP" in cat or "NOTEBOOK" in cat:
+        if "CHROMEBOOK" in d or "CHROME OS" in d: return "Chromebook"
+        if any(x in d for x in ["2-IN-1","2 IN 1","CONVERTIBLE","X360"]): return "2-in-1"
+        if any(x in d for x in ["WORKSTATION","PRECISION","ZBOOK","THINKPAD P"]): return "Workstation"
+        if any(x in d for x in ["GAMING","LEGION","ROG ","TUF ","ALIENWARE","OMEN"]): return "Gaming"
+        if any(x in d for x in ["THINKPAD","LATITUDE","ELITEBOOK","PROBOOK","EXPERTBOOK"]): return "Business"
+        return "Notebook"
+    if "DESKTOP" in cat:
+        if any(x in d for x in ["ALL-IN-ONE","ALL IN ONE"," AIO "]): return "All-in-One"
+        if any(x in d for x in ["MINI PC","MINI DESKTOP","TINY","MICRO"]): return "Mini PC"
+        if any(x in d for x in ["SFF","SMALL FORM FACTOR"]): return "SFF"
+        if "WORKSTATION" in d: return "Workstation"
+        return "Tower"
+    if "MONITOR" in cat:
+        if "GAMING" in d: return "Gaming"
+        if "CURVED" in d: return "Curved"
+        if "PORTABLE" in d: return "Portable"
+        return "Monitor"
+    if "STORAGE" in cat:
+        if "SSD" in d or "NVME" in d: return "SSD"
+        if "HDD" in d or "HARD DRIVE" in d: return "HDD"
+        if "USB" in d or "FLASH" in d: return "USB / Flash"
+    return ""
+
+
+def _public_brand(description):
+    d=safe_text(description).strip(); up=d.upper()
+    known=["LENOVO","HP","DELL","ASUS","ACER","APPLE","MSI","SAMSUNG","LG","MICROSOFT","INTEL","AMD","LOGITECH","JBL","SONY","CANON","EPSON","BROTHER","KINGSTON","SANDISK","WESTERN DIGITAL","WD","SEAGATE"]
+    for b in known:
+        if re.search(rf"\b{re.escape(b)}\b",up): return b
+    return ""
+
+
+def render_public_price_list():
+    st.markdown("""
+    <style>
+      section[data-testid="stSidebar"]{display:none!important;}
+      .public-title{font-size:30px;font-weight:850;color:#1B365D;line-height:1.1;margin-bottom:2px;}
+      .public-sub{font-size:14px;color:#667085;margin-bottom:12px;}
+      .public-card{border:1px solid #E3E8EF;border-radius:12px;padding:14px 16px;margin-bottom:10px;background:#fff;}
+      .public-brand{font-size:11px;font-weight:800;letter-spacing:.08em;color:#667085;}
+      .public-desc{font-size:16px;font-weight:750;color:#162B46;margin:2px 0 4px 0;}
+      .public-item{font-size:12px;color:#667085;font-family:monospace;}
+      .public-price{font-size:20px;font-weight:850;color:#1B365D;}
+      .tag{display:inline-block;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:750;margin-right:5px;margin-top:5px;background:#F2F4F7;color:#344054;}
+      .tag-hot{background:#FFF1E8;color:#B54708}.tag-new{background:#ECFDF3;color:#027A48}.tag-low{background:#FEF3F2;color:#B42318}
+    </style>
+    """,unsafe_allow_html=True)
+
+    logo_candidates=[APP_DIR/"logo.png",APP_DIR/"Logo.png",Path.cwd()/"logo.png"]
+    logo=next((p for p in logo_candidates if p.exists()),None)
+    a,b=st.columns([0.65,5.35],vertical_alignment="center")
+    if logo:
+        with a: st.image(str(logo),width=86)
+    with b:
+        st.markdown('<div class="public-title">Motech Miami Price List</div>',unsafe_allow_html=True)
+        st.markdown('<div class="public-sub">Wholesale Technology · Updated inventory and pricing</div>',unsafe_allow_html=True)
+
+    run=latest_publication_run(); df=latest_publication_items()
+    if run:
+        try: stamp=datetime.datetime.fromisoformat(run["published_at"]).strftime("%b %d, %Y · %I:%M %p")
+        except Exception: stamp=run["published_at"].replace("T"," ")
+        st.caption(f"Last update: {stamp}")
+    if df.empty:
+        st.info("The price list is not available yet. Please check back after the next update."); return
+
+    for c in ["category","subcategory","description","condition","processor","ram","storage","screen","stock_publico","moq","eta","item_publico"]:
+        if c not in df.columns: df[c]=""
+    if "hidden" in df.columns: df=df[df["hidden"].fillna(0).astype(int)==0].copy()
+    df["subcategory_display"]=df.apply(lambda r:safe_text(r.get("subcategory")) or infer_public_subcategory(r.get("category"),r.get("description")),axis=1)
+    df["brand"]=df["description"].map(_public_brand)
+
+    current_version=client_password_version()
+    unlocked=(st.session_state.get("public_price_version")==current_version and current_version>0)
+    unlock_col,info_col=st.columns([1,3])
+    with unlock_col:
+        if unlocked:
+            st.success("🔓 Prices unlocked")
+            if st.button("Lock prices",use_container_width=True):
+                st.session_state.pop("public_price_version",None); st.rerun()
+        else:
+            with st.popover("🔒 Unlock Prices",use_container_width=True):
+                if not client_password_is_configured(): st.info("Price access is not configured yet. Please contact Motech.")
+                else:
+                    pwd=st.text_input("Enter password",type="password",key="public_unlock_password")
+                    if st.button("Unlock",type="primary",use_container_width=True,key="public_unlock_btn"):
+                        if verify_client_password(pwd): st.session_state["public_price_version"]=client_password_version(); st.rerun()
+                        else: st.error("Incorrect password.")
+    with info_col: st.caption("Products are visible to everyone. Prices require the Motech access password.")
+
+    cats=sorted([x for x in df["category"].fillna("").astype(str).unique().tolist() if x])
+    category_options=["HOT DEALS"]+cats
+    default_cat="HOT DEALS" if int(df["hot_deal"].fillna(0).sum()) else (cats[0] if cats else None)
+    selected_cat=st.segmented_control("Category",category_options,default=default_cat,selection_mode="single")
+    view=df.copy()
+    if selected_cat=="HOT DEALS": view=view[view["hot_deal"].fillna(0).astype(int)==1]
+    elif selected_cat: view=view[view["category"]==selected_cat]
+
+    search=st.text_input("Search",placeholder="Search by brand, item, model or specifications…")
+    f1,f2,f3,f4=st.columns(4)
+    with f1:
+        brands=sorted(x for x in view["brand"].unique().tolist() if x); brand=st.selectbox("Brand",["All"]+brands)
+    with f2:
+        subs=sorted(x for x in view["subcategory_display"].unique().tolist() if x); sub=st.selectbox("Subcategory",["All"]+subs)
+    with f3:
+        conditions=sorted(x for x in view["condition"].fillna("").astype(str).unique().tolist() if x); condition=st.selectbox("Condition",["All"]+conditions)
+    with f4:
+        stock_filter=st.selectbox("Availability",["All","20+","100+","Low Stock"])
+    if brand!="All": view=view[view["brand"]==brand]
+    if sub!="All": view=view[view["subcategory_display"]==sub]
+    if condition!="All": view=view[view["condition"]==condition]
+    if stock_filter=="20+": view=view[view["stock_publico"].astype(str)=="20+"]
+    elif stock_filter=="100+": view=view[view["stock_publico"].astype(str)=="100+"]
+    elif stock_filter=="Low Stock": view=view[view["low_stock"].fillna(0).astype(int)==1]
+
+    if selected_cat and any(k in selected_cat.upper() for k in ["LAPTOP","NOTEBOOK","DESKTOP"]):
+        t1,t2,t3,t4=st.columns(4)
+        with t1:
+            vals=sorted(x for x in view["processor"].fillna("").astype(str).unique().tolist() if x); cpu=st.selectbox("Processor",["All"]+vals)
+        with t2:
+            vals=sorted(x for x in view["ram"].fillna("").astype(str).unique().tolist() if x); ram=st.selectbox("RAM",["All"]+vals)
+        with t3:
+            vals=sorted(x for x in view["storage"].fillna("").astype(str).unique().tolist() if x); storage=st.selectbox("Storage",["All"]+vals)
+        with t4:
+            vals=sorted(x for x in view["screen"].fillna("").astype(str).unique().tolist() if x); screen=st.selectbox("Screen Size",["All"]+vals)
+        if cpu!="All": view=view[view["processor"]==cpu]
+        if ram!="All": view=view[view["ram"]==ram]
+        if storage!="All": view=view[view["storage"]==storage]
+        if screen!="All": view=view[view["screen"]==screen]
+
+    if search.strip():
+        q=search.strip().upper()
+        hay=(view["item_publico"].fillna("").astype(str)+" "+view["description"].fillna("").astype(str)+" "+view["brand"].fillna("").astype(str)+" "+view["processor"].fillna("").astype(str)+" "+view["ram"].fillna("").astype(str)+" "+view["storage"].fillna("").astype(str)).str.upper()
+        view=view[hay.str.contains(re.escape(q),na=False)]
+
+    st.caption(f"{len(view):,} products")
+    if view.empty:
+        st.info("No products match the selected filters."); return
+
+    for _,r in view.head(500).iterrows():
+        brand=safe_text(r.get("brand")) or "MOTECH"
+        desc=html.escape(safe_text(r.get("description"))); item=html.escape(safe_text(r.get("item_publico")))
+        specs=" · ".join(x for x in [safe_text(r.get("processor")),safe_text(r.get("ram")),safe_text(r.get("storage")),safe_text(r.get("screen"))] if x)
+        tags=[]
+        if int(r.get("hot_deal") or 0): tags.append('<span class="tag tag-hot">🔥 HOT DEAL</span>')
+        if int(r.get("new_arrival") or 0): tags.append('<span class="tag tag-new">NEW ARRIVAL</span>')
+        if int(r.get("low_stock") or 0): tags.append('<span class="tag tag-low">LOW STOCK</span>')
+        stock=html.escape(safe_text(r.get("stock_publico"))); moq=html.escape(safe_text(r.get("moq"))); eta=html.escape(safe_text(r.get("eta"))); condition=html.escape(safe_text(r.get("condition")))
+        price=f'${float(r["published_price"]):,.2f}' if unlocked and pd.notna(r.get("published_price")) else '🔒 Enter password to view price'
+        card=f"""<div class="public-card">
+          <div class="public-brand">{html.escape(brand)}</div>
+          <div class="public-desc">{desc}</div>
+          <div class="public-item">{item}</div>
+          <div style="font-size:12px;color:#475467;margin-top:5px;">{html.escape(specs)}</div>
+          <div>{''.join(tags)}</div>
+          <div style="margin-top:8px;font-size:12px;color:#344054;">Stock: <b>{stock}</b> &nbsp; · &nbsp; MOQ: <b>{moq or '-'}</b> &nbsp; · &nbsp; ETA: <b>{eta or '-'}</b> &nbsp; · &nbsp; Condition: <b>{condition or '-'}</b></div>
+          <div class="public-price" style="margin-top:8px;">{html.escape(price)}</div>
+        </div>"""
+        st.markdown(card,unsafe_allow_html=True)
+    if len(view)>500: st.info("Showing the first 500 results. Use filters or search to narrow the list.")
+
+
+# Public URL: append ?mode=public. The default remains the Spanish internal operator panel.
+_app_mode = safe_text(st.query_params.get("mode","admin")).lower()
+if _app_mode == "public":
+    render_public_price_list()
+    st.stop()
+
 logo_path=next((p for p in [APP_DIR/"logo.png",APP_DIR/"Logo.png",Path.cwd()/"logo.png"] if p.exists()),None)
 if logo_path:
     c1,c2=st.columns([0.7,5.3],vertical_alignment="center")
     with c1: st.image(str(logo_path),width=84)
     with c2:
         st.markdown('<div class="main-header">Motech Miami — Price List Manager</div>',unsafe_allow_html=True)
-        st.markdown('<div class="sub-header">Panel interno · Historial, alertas y publicación</div>',unsafe_allow_html=True)
+        st.markdown('<div class="sub-header">Panel interno · Operación diaria y publicación</div>',unsafe_allow_html=True)
 else:
     st.markdown('<div class="main-header">Motech Miami — Price List Manager</div>',unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Panel interno · Historial, alertas y publicación</div>',unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Panel interno · Operación diaria y publicación</div>',unsafe_allow_html=True)
 
 master=load_supplier_master()
 with st.sidebar:
@@ -1350,13 +1580,13 @@ with st.sidebar:
     else: st.success(f"Maestro de proveedores cargado: {len(master)} registros")
     st.caption("In Transit no se utiliza como stock disponible.")
     st.divider()
-    st.caption("MVP 4 · Borrador, historial de 7 días y publicación controlada.")
+    st.caption("MVP 5 · Panel interno + Price List pública protegida.")
 
 if not uploaded_files:
-    page=st.radio("Sección",["Cargar proveedores","Agregar producto manual"],horizontal=True,label_visibility="collapsed")
+    page=st.radio("Sección",["Cargar proveedores","Agregar producto manual","Configuración"],horizontal=True,label_visibility="collapsed")
     if page=="Cargar proveedores":
         st.info("Sube las listas de proveedores para comenzar la actualización diaria.")
-    else:
+    elif page=="Agregar producto manual":
         st.subheader("Agregar producto manual")
         render_manual_form("manual_empty")
         existing=load_manual_products()
@@ -1364,6 +1594,18 @@ if not uploaded_files:
             st.markdown("#### Productos manuales activos")
             st.dataframe(pd.DataFrame(existing)[["id","base_item","description","stock","cost","moq","eta"]],use_container_width=True,hide_index=True,
                          column_config={"cost":st.column_config.NumberColumn(format="$%.2f")})
+    else:
+        st.subheader("Configuración")
+        st.markdown("#### Contraseña de clientes")
+        st.caption("La vista pública muestra productos sin contraseña; únicamente los precios están protegidos.")
+        p1=st.text_input("Nueva contraseña",type="password",key="cfg_pwd_1")
+        p2=st.text_input("Confirmar contraseña",type="password",key="cfg_pwd_2")
+        if st.button("Cambiar contraseña de clientes",type="primary"):
+            if p1!=p2: st.error("Las contraseñas no coinciden.")
+            elif len(p1)<4: st.error("La contraseña debe tener al menos 4 caracteres.")
+            else:
+                v=set_client_password(p1); st.success(f"Contraseña actualizada. Versión de acceso: {v}.")
+        st.info("Vista pública: agrega ?mode=public al final de la URL de esta aplicación.")
     st.stop()
 
 frames=[]; logs=[]
@@ -1404,7 +1646,25 @@ st.markdown(
     f'<div class="kpi-box"><div class="kpi-value">{manual_products_count}</div><div class="kpi-label">Productos manuales</div></div>'
     f'</div>', unsafe_allow_html=True)
 
-page=st.radio("Sección",["Productos","Revisión requerida","Resumen y publicación","Agregar producto manual","Resultado de importación"],horizontal=True,label_visibility="collapsed")
+page=st.radio("Sección",["Productos","Revisión requerida","Resumen y publicación","Agregar producto manual","Resultado de importación","Configuración"],horizontal=True,label_visibility="collapsed")
+
+if page=="Configuración":
+    st.subheader("Configuración")
+    st.markdown("#### Contraseña de clientes")
+    status="Configurada" if client_password_is_configured() else "No configurada"
+    st.write(f"**Estado:** {status} · **Versión:** {client_password_version()}")
+    p1=st.text_input("Nueva contraseña",type="password",key="cfg2_pwd_1")
+    p2=st.text_input("Confirmar contraseña",type="password",key="cfg2_pwd_2")
+    if st.button("Cambiar contraseña de clientes",type="primary"):
+        if p1!=p2: st.error("Las contraseñas no coinciden.")
+        elif len(p1)<4: st.error("La contraseña debe tener al menos 4 caracteres.")
+        else:
+            v=set_client_password(p1); st.session_state.pop("public_price_version",None)
+            st.success(f"Contraseña actualizada. Los accesos anteriores quedan invalidados. Nueva versión: {v}.")
+    st.divider(); st.markdown("#### Vista pública")
+    st.code("?mode=public",language=None)
+    st.caption("Añade ese parámetro a la URL de Streamlit para abrir directamente la Price List pública en inglés.")
+    st.stop()
 
 if page=="Resultado de importación":
     st.subheader("Resultado de importación")
