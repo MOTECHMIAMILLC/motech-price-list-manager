@@ -804,9 +804,11 @@ def parse_uploaded(uploaded) -> Tuple[pd.DataFrame, dict]:
 
 
 # ============================================================
-# PRICE LIST MANAGER — MVP 2
-# Precio manual + ocultar/mostrar + proveedores alternativos
+# PRICE LIST MANAGER — MVP 3
+# Persistencia + historial + publicación
 # ============================================================
+import sqlite3
+
 SUPPLIER_MASTER_ALIASES = {
     "H&Z": "H&Z", "SUNRISE": "SUNRISE INTERNATIONAL", "ALL PLUS": "ALLPLUS",
     "HAIFA": "HAIFA", "ALLBRANDS": "ALLBRANDS", "AQUA CONSUMER": "AQUA",
@@ -815,12 +817,212 @@ SUPPLIER_MASTER_ALIASES = {
     "203_TRADING": "203 TRADING", "EMOLO": "EMOLO", "PRT": "PRT",
 }
 
-if "manual_prices" not in st.session_state:
-    st.session_state.manual_prices = {}
-if "manual_margins" not in st.session_state:
-    st.session_state.manual_margins = {}
-if "hidden_products" not in st.session_state:
-    st.session_state.hidden_products = set()
+APP_DIR = Path(__file__).resolve().parent
+DB_PATH = APP_DIR / "motech_pricelist.db"
+
+
+def db_conn():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    with db_conn() as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS product_overrides (
+            product_key TEXT PRIMARY KEY,
+            manual_price REAL,
+            manual_margin REAL,
+            hidden INTEGER NOT NULL DEFAULT 0,
+            category_override TEXT,
+            subcategory_override TEXT,
+            updated_at TEXT NOT NULL
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS manual_products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            base_item TEXT NOT NULL,
+            supplier_name TEXT NOT NULL DEFAULT 'MANUAL',
+            supplier_code TEXT,
+            brand TEXT,
+            category TEXT,
+            subcategory TEXT,
+            description TEXT NOT NULL,
+            condition TEXT NOT NULL DEFAULT 'NEW',
+            processor TEXT,
+            ram TEXT,
+            storage TEXT,
+            screen TEXT,
+            stock REAL NOT NULL,
+            cost REAL NOT NULL,
+            moq REAL,
+            eta TEXT,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS review_actions (
+            issue_key TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            note TEXT,
+            updated_at TEXT NOT NULL
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS publication_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            published_at TEXT NOT NULL
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS publication_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            product_key TEXT NOT NULL,
+            item_publico TEXT,
+            supplier TEXT,
+            cost REAL,
+            published_price REAL,
+            stock_real REAL,
+            stock_publico TEXT,
+            moq TEXT,
+            eta TEXT,
+            category TEXT,
+            subcategory TEXT,
+            description TEXT,
+            condition TEXT,
+            hot_deal INTEGER NOT NULL DEFAULT 0,
+            new_arrival INTEGER NOT NULL DEFAULT 0,
+            low_stock INTEGER NOT NULL DEFAULT 0,
+            hidden INTEGER NOT NULL DEFAULT 0,
+            published_at TEXT NOT NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pub_items_run ON publication_items(run_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_pub_items_product ON publication_items(product_key,published_at)")
+        conn.commit()
+
+
+def now_iso():
+    return datetime.datetime.now().isoformat(timespec="seconds")
+
+
+def load_overrides():
+    with db_conn() as conn:
+        rows = conn.execute("SELECT * FROM product_overrides").fetchall()
+    return {r["product_key"]: dict(r) for r in rows}
+
+
+def save_override(product_key, manual_price, manual_margin, hidden, category_override=None, subcategory_override=None):
+    with db_conn() as conn:
+        conn.execute("""INSERT INTO product_overrides
+            (product_key,manual_price,manual_margin,hidden,category_override,subcategory_override,updated_at)
+            VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(product_key) DO UPDATE SET
+                manual_price=excluded.manual_price,
+                manual_margin=excluded.manual_margin,
+                hidden=excluded.hidden,
+                category_override=excluded.category_override,
+                subcategory_override=excluded.subcategory_override,
+                updated_at=excluded.updated_at
+        """, (product_key, manual_price, manual_margin, int(bool(hidden)), category_override, subcategory_override, now_iso()))
+        conn.commit()
+
+
+def load_manual_products():
+    with db_conn() as conn:
+        rows=conn.execute("SELECT * FROM manual_products WHERE active=1 ORDER BY id DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_manual_product(data):
+    with db_conn() as conn:
+        conn.execute("""INSERT INTO manual_products
+            (base_item,supplier_name,supplier_code,brand,category,subcategory,description,condition,
+             processor,ram,storage,screen,stock,cost,moq,eta,active,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)""", (
+            data["base_item"], data.get("supplier_name") or "MANUAL", data.get("supplier_code") or "MAN",
+            data.get("brand"), data.get("category"), data.get("subcategory"), data["description"], data.get("condition") or "NEW",
+            data.get("processor"), data.get("ram"), data.get("storage"), data.get("screen"), data["stock"], data["cost"],
+            data.get("moq"), data.get("eta"), now_iso(), now_iso()
+        ))
+        conn.commit()
+
+
+def deactivate_manual_product(row_id):
+    with db_conn() as conn:
+        conn.execute("UPDATE manual_products SET active=0, updated_at=? WHERE id=?", (now_iso(), int(row_id)))
+        conn.commit()
+
+
+def review_status(issue_key):
+    with db_conn() as conn:
+        r=conn.execute("SELECT status FROM review_actions WHERE issue_key=?",(issue_key,)).fetchone()
+    return r["status"] if r else None
+
+
+def save_review_action(issue_key,status,note=""):
+    with db_conn() as conn:
+        conn.execute("""INSERT INTO review_actions(issue_key,status,note,updated_at) VALUES(?,?,?,?)
+            ON CONFLICT(issue_key) DO UPDATE SET status=excluded.status,note=excluded.note,updated_at=excluded.updated_at""",
+            (issue_key,status,note,now_iso()))
+        conn.commit()
+
+
+def latest_publication_run():
+    with db_conn() as conn:
+        r=conn.execute("SELECT id,published_at FROM publication_runs ORDER BY id DESC LIMIT 1").fetchone()
+    return dict(r) if r else None
+
+
+def latest_publication_items():
+    run=latest_publication_run()
+    if not run:
+        return pd.DataFrame()
+    with db_conn() as conn:
+        rows=conn.execute("SELECT * FROM publication_items WHERE run_id=? ORDER BY id",(run["id"],)).fetchall()
+    return pd.DataFrame([dict(r) for r in rows])
+
+
+def product_history(product_key, days=7):
+    cutoff=(datetime.datetime.now()-datetime.timedelta(days=days)).isoformat(timespec="seconds")
+    with db_conn() as conn:
+        rows=conn.execute("""SELECT pi.* FROM publication_items pi
+            WHERE pi.product_key=? AND pi.published_at>=? ORDER BY pi.published_at DESC""",
+            (product_key,cutoff)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def prune_publication_history(days=7):
+    cutoff=(datetime.datetime.now()-datetime.timedelta(days=days)).isoformat(timespec="seconds")
+    with db_conn() as conn:
+        old=conn.execute("SELECT id FROM publication_runs WHERE published_at<?",(cutoff,)).fetchall()
+        ids=[r["id"] for r in old]
+        if ids:
+            marks=",".join("?" for _ in ids)
+            conn.execute(f"DELETE FROM publication_items WHERE run_id IN ({marks})",ids)
+            conn.execute(f"DELETE FROM publication_runs WHERE id IN ({marks})",ids)
+        conn.commit()
+
+
+def publish_snapshot(df):
+    ts=now_iso()
+    with db_conn() as conn:
+        cur=conn.execute("INSERT INTO publication_runs(published_at) VALUES(?)",(ts,))
+        run_id=cur.lastrowid
+        for _,r in df.iterrows():
+            if bool(r.get("Oculto",False)):
+                continue
+            conn.execute("""INSERT INTO publication_items
+                (run_id,product_key,item_publico,supplier,cost,published_price,stock_real,stock_publico,moq,eta,category,subcategory,description,condition,hot_deal,new_arrival,low_stock,hidden,published_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(
+                run_id,safe_text(r.get("PRODUCT_KEY")),safe_text(r.get("ITEM_PUBLICO")),safe_text(r.get("Proveedor")),
+                float(r.get("Costo")) if pd.notna(r.get("Costo")) else None,
+                float(r.get("Precio_Publicado")) if pd.notna(r.get("Precio_Publicado")) else None,
+                float(r.get("Stock_Real")) if pd.notna(r.get("Stock_Real")) else None,safe_text(r.get("Stock_Publico")),
+                safe_text(r.get("MOQ_Final")),safe_text(r.get("ETA_Final")),safe_text(r.get("Categoria")),safe_text(r.get("Subcategoria_Manual")),
+                safe_text(r.get("Descripcion")),safe_text(r.get("Condicion_Normalizada")),int(bool(r.get("HOT_DEAL",False))),
+                int(bool(r.get("NEW_ARRIVAL",False))),int(bool(r.get("LOW_STOCK",False))),0,ts))
+        conn.commit()
+    prune_publication_history(7)
+    return run_id,ts
+
+
+init_db()
 
 
 def _clean_master_name(v):
@@ -828,7 +1030,7 @@ def _clean_master_name(v):
 
 
 def load_supplier_master():
-    candidates=[Path(__file__).resolve().parent/"supplier_master.xlsx",Path.cwd()/"supplier_master.xlsx"]
+    candidates=[APP_DIR/"supplier_master.xlsx",Path.cwd()/"supplier_master.xlsx"]
     p=next((x for x in candidates if x.exists()),None)
     if p is None:
         return pd.DataFrame(columns=["CODIGO PROVEEDOR","MOQ","ETA","NOMBRE","_NOMBRE_N"])
@@ -880,8 +1082,36 @@ def default_margin_pct(category, cost):
     cat=safe_text(category).upper()
     if "LAPTOP" in cat or "NOTEBOOK" in cat or "DESKTOP" in cat:
         return 2.0
-    # Los demás porcentajes (6/7/10) se definirán después por rango/categoría.
     return None
+
+
+def manual_products_frame():
+    rows=[]
+    for m in load_manual_products():
+        rows.append({
+            "Proveedor": safe_text(m.get("supplier_name")) or "MANUAL",
+            "SKU": safe_text(m.get("base_item")).upper(),
+            "SKU_Fuente": "MANUAL",
+            "Descripcion": safe_text(m.get("description")),
+            "Condicion": safe_text(m.get("condition")) or "NEW",
+            "Precio": float(m.get("cost")),
+            "Stock": float(m.get("stock")),
+            "Stock_Miami": pd.NA,
+            "Stock_NY": pd.NA,
+            "En_Transito": 0,
+            "MOQ": m.get("moq"),
+            "ETA": safe_text(m.get("eta")),
+            "Ubicacion": "MANUAL",
+            "_MANUAL_ID": m.get("id"),
+            "_MANUAL_CODE": safe_text(m.get("supplier_code")) or "MAN",
+            "_MANUAL_CATEGORY": safe_text(m.get("category")),
+            "_MANUAL_SUBCATEGORY": safe_text(m.get("subcategory")),
+            "_MANUAL_PROCESSOR": safe_text(m.get("processor")),
+            "_MANUAL_RAM": safe_text(m.get("ram")),
+            "_MANUAL_STORAGE": safe_text(m.get("storage")),
+            "_MANUAL_SCREEN": safe_text(m.get("screen")),
+        })
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
 def prepare_offers(df_all,master):
@@ -890,10 +1120,22 @@ def prepare_offers(df_all,master):
     specs=df.apply(lambda r:extraer_especificaciones(f'{r["Descripcion"]} {r["SKU"]}'),axis=1)
     specs.columns=["Procesador","RAM","Almacenamiento","Pantalla"]
     df[["Procesador","RAM","Almacenamiento","Pantalla"]]=specs
+
+    if "_MANUAL_CATEGORY" in df.columns:
+        mask=df["_MANUAL_CATEGORY"].fillna("").astype(str).str.strip().ne("")
+        df.loc[mask,"Categoria"]=df.loc[mask,"_MANUAL_CATEGORY"].map(normalize_category_name)
+        for target,src in [("Procesador","_MANUAL_PROCESSOR"),("RAM","_MANUAL_RAM"),("Almacenamiento","_MANUAL_STORAGE"),("Pantalla","_MANUAL_SCREEN")]:
+            if src in df.columns:
+                m=df[src].fillna("").astype(str).str.strip().ne("")
+                df.loc[m,target]=df.loc[m,src]
+
     df["ITEM_BASE"]=df["SKU"].map(base_item)
     codes=[]; moqs=[]; etas=[]; full=[]
     for _,r in df.iterrows():
-        code,dm,de=supplier_defaults(r["Proveedor"],master)
+        if safe_text(r.get("SKU_Fuente")).upper()=="MANUAL":
+            code=safe_text(r.get("_MANUAL_CODE")) or "MAN"; dm=de=None
+        else:
+            code,dm,de=supplier_defaults(r["Proveedor"],master)
         rm=clean_qty(r.get("MOQ")); re_=safe_text(r.get("ETA"))
         m=rm if rm is not None else dm
         e=re_ if re_ else (int(de) if de is not None else "")
@@ -913,8 +1155,15 @@ def prepare_offers(df_all,master):
     return df
 
 
-def select_winners(offers):
+def _provider_promo_flag(row):
+    text=(safe_text(row.get("Descripcion"))+" "+safe_text(row.get("Ubicacion"))).upper()
+    return ("HOT DEAL" in text) or ("PRICE DROP" in text) or ("PROMO" in text and "PRICE" in text)
+
+
+def select_winners(offers, overrides):
     eligible=offers[offers["Elegible"]].copy()
+    latest=latest_publication_items()
+    prev_map={} if latest.empty else {r["product_key"]:r for _,r in latest.iterrows()}
     winners=[]; alternatives={}
     for key,g in eligible.groupby("PRODUCT_KEY",dropna=False):
         ordered=g.sort_values(["Costo","Stock_Real"],ascending=[True,False]).reset_index(drop=True)
@@ -922,44 +1171,200 @@ def select_winners(offers):
         w=ordered.iloc[0].copy()
         w["Stock_Publico"]=public_stock(w["Stock_Real"])
         w["Alternativas"]=max(len(ordered)-1,0)
-        margin=st.session_state.manual_margins.get(key)
-        if margin is None:
-            margin=default_margin_pct(w.get("Categoria"),w.get("Costo"))
+        ov=overrides.get(key,{})
+        margin=ov.get("manual_margin")
+        if margin is None: margin=default_margin_pct(w.get("Categoria"),w.get("Costo"))
         w["Margen_Pct"]=margin
         suggested=(float(w["Costo"])*(1+float(margin)/100)) if margin is not None and pd.notna(w["Costo"]) else None
         w["Precio_Sugerido"]=suggested
-        manual=st.session_state.manual_prices.get(key)
+        manual=ov.get("manual_price")
         w["Precio_Publicado"]=float(manual) if manual is not None else suggested
         w["Precio_Manual"]=manual is not None
-        w["Oculto"]=key in st.session_state.hidden_products
+        w["Oculto"]=bool(ov.get("hidden",0))
+        if safe_text(ov.get("category_override")): w["Categoria"]=normalize_category_name(ov.get("category_override"))
+        w["Subcategoria_Manual"]=safe_text(ov.get("subcategory_override"))
+        prev=prev_map.get(key)
+        w["Costo_Anterior"]=float(prev["cost"]) if prev is not None and pd.notna(prev.get("cost")) else pd.NA
+        if prev is not None and pd.notna(prev.get("cost")) and float(prev.get("cost"))!=0:
+            w["Variacion_Costo_Pct"]=(float(w["Costo"])-float(prev["cost"]))/float(prev["cost"])*100
+        else:
+            w["Variacion_Costo_Pct"]=pd.NA
+        # Nuevo si no estaba en la última publicación. La etiqueta dura 3 días desde su primera publicación.
+        hist=product_history(key,7)
+        if not hist:
+            new_arrival=True
+        else:
+            first=min(datetime.datetime.fromisoformat(h["published_at"]) for h in hist if h.get("published_at"))
+            new_arrival=(datetime.datetime.now()-first).days < 3
+        w["NEW_ARRIVAL"]=bool(new_arrival)
+        # HOT DEAL por señal explícita del proveedor. La caída histórica se muestra aparte y >25% exige revisión.
+        w["HOT_DEAL"]=bool(_provider_promo_flag(w))
+        w["LOW_STOCK"]=False
         winners.append(w.to_dict()); alternatives[key]=ordered
+
+    # Productos ya publicados que hoy no tienen oferta >20: permitir LOW STOCK hasta 2 días; día 3 se retira.
+    existing_keys={x["PRODUCT_KEY"] for x in winners}
+    if not latest.empty:
+        for _,prev in latest.iterrows():
+            key=safe_text(prev.get("product_key"))
+            if not key or key in existing_keys:
+                continue
+            current=offers[offers["PRODUCT_KEY"]==key].copy()
+            current=current[(current["Costo"].notna()) & (current["Stock_Real"].fillna(0)>0) & (current["Stock_Real"].fillna(0)<=20)]
+            if current.empty:
+                continue
+            current=current.sort_values(["Costo","Stock_Real"],ascending=[True,False]).reset_index(drop=True)
+            c=current.iloc[0].copy()
+            # Cuenta publicaciones consecutivas previas marcadas LOW STOCK, máximo 2 publicaciones antes de retirar.
+            hist=product_history(key,7)
+            consecutive=0
+            for h in hist:
+                if int(h.get("low_stock") or 0)==1: consecutive+=1
+                else: break
+            if consecutive>=2:
+                continue
+            c["Stock_Publico"]=public_stock(c["Stock_Real"])
+            c["Alternativas"]=max(len(current)-1,0)
+            ov=overrides.get(key,{})
+            margin=ov.get("manual_margin")
+            if margin is None: margin=default_margin_pct(c.get("Categoria"),c.get("Costo"))
+            c["Margen_Pct"]=margin
+            suggested=(float(c["Costo"])*(1+float(margin)/100)) if margin is not None and pd.notna(c["Costo"]) else None
+            c["Precio_Sugerido"]=suggested
+            manual=ov.get("manual_price")
+            c["Precio_Publicado"]=float(manual) if manual is not None else suggested
+            c["Precio_Manual"]=manual is not None
+            c["Oculto"]=bool(ov.get("hidden",0))
+            if safe_text(ov.get("category_override")): c["Categoria"]=normalize_category_name(ov.get("category_override"))
+            c["Subcategoria_Manual"]=safe_text(ov.get("subcategory_override"))
+            c["Costo_Anterior"]=float(prev["cost"]) if pd.notna(prev.get("cost")) else pd.NA
+            if pd.notna(prev.get("cost")) and float(prev.get("cost"))!=0:
+                c["Variacion_Costo_Pct"]=(float(c["Costo"])-float(prev["cost"]))/float(prev["cost"])*100
+            else: c["Variacion_Costo_Pct"]=pd.NA
+            c["NEW_ARRIVAL"]=False; c["HOT_DEAL"]=bool(_provider_promo_flag(c)); c["LOW_STOCK"]=True
+            winners.append(c.to_dict()); alternatives[key]=current
+
     return pd.DataFrame(winners),alternatives
 
 
-app_dir=Path(__file__).resolve().parent
-logo_path=next((p for p in [app_dir/"logo.png",app_dir/"Logo.png",Path.cwd()/"logo.png"] if p.exists()),None)
+def build_review_issues(offers, winners, import_log):
+    issues=[]
+    for _,r in import_log.iterrows():
+        if int(r.get("Productos",0) or 0)<=0:
+            issues.append({"ISSUE_KEY":f'FILE::{r.get("Archivo")}',"Tipo":"ARCHIVO","Producto":"—","Proveedor":r.get("Proveedor"),
+                           "Motivo":"Verificar archivo Excel; no se importaron productos.","Detalle":safe_text(r.get("Detalle"))})
+    bad=offers[~offers["Elegible"]].copy()
+    for _,r in bad.iterrows():
+        blocking=[]
+        if not bool(r.get("Elegible_MOQ")): blocking.append("MOQ mayor que stock")
+        if pd.isna(r.get("Costo")): blocking.append("Costo inválido")
+        if blocking:
+            ik=f'OFFER::{r.get("Proveedor")}::{r.get("PRODUCT_KEY")}::{"/".join(blocking)}'
+            issues.append({"ISSUE_KEY":ik,"Tipo":"PRODUCTO","Producto":r.get("ITEM_PUBLICO"),"Proveedor":r.get("Proveedor"),
+                           "Motivo":"; ".join(blocking),"Detalle":safe_text(r.get("Descripcion"))})
+    for _,r in winners.iterrows():
+        cat=safe_text(r.get("Categoria")).upper()
+        if any(x in cat for x in ["LAPTOP","NOTEBOOK","DESKTOP"]):
+            missing=[]
+            if not safe_text(r.get("Procesador")): missing.append("procesador")
+            if not safe_text(r.get("RAM")): missing.append("RAM")
+            if not safe_text(r.get("Almacenamiento")): missing.append("almacenamiento")
+            if missing:
+                ik=f'ATTR::{r.get("PRODUCT_KEY")}::{",".join(missing)}'
+                issues.append({"ISSUE_KEY":ik,"Tipo":"ATRIBUTOS","Producto":r.get("ITEM_PUBLICO"),"Proveedor":r.get("Proveedor"),
+                               "Motivo":"Información incompleta: "+", ".join(missing),"Detalle":safe_text(r.get("Descripcion"))})
+    # Variación de costo > ±25% respecto a la última publicación: revisión obligatoria.
+    for _,r in winners.iterrows():
+        v=pd.to_numeric(pd.Series([r.get("Variacion_Costo_Pct")]),errors="coerce").iloc[0]
+        if pd.notna(v) and abs(float(v))>25:
+            ik=f'PRICEVAR::{r.get("PRODUCT_KEY")}::{round(float(v),2)}'
+            issues.append({"ISSUE_KEY":ik,"Tipo":"PRECIO","Producto":r.get("ITEM_PUBLICO"),"Proveedor":r.get("Proveedor"),
+                           "Motivo":f'Variación de costo {float(v):+.1f}% (supera ±25%)',
+                           "Detalle":f'Costo anterior: {r.get("Costo_Anterior")} · Costo actual: {r.get("Costo")}'})
+        if bool(r.get("Precio_Manual")) and pd.notna(v) and abs(float(v))>0.01:
+            ik=f'MANPRICE::{r.get("PRODUCT_KEY")}::{round(float(r.get("Costo",0)),2)}'
+            issues.append({"ISSUE_KEY":ik,"Tipo":"PRECIO MANUAL","Producto":r.get("ITEM_PUBLICO"),"Proveedor":r.get("Proveedor"),
+                           "Motivo":"El costo cambió; revisar precio manual.",
+                           "Detalle":f'Variación de costo: {float(v):+.1f}%'})
+    pending=[]
+    for i in issues:
+        status=review_status(i["ISSUE_KEY"])
+        if status not in {"APROBADO","IGNORADO"}: pending.append(i)
+    return pd.DataFrame(pending)
+
+
+def render_manual_form(form_key, offers=None):
+    with st.form(form_key):
+        a,b,c=st.columns(3)
+        with a:
+            bi=st.text_input("ITEM base *")
+            brand=st.text_input("Marca")
+            category=st.selectbox("Categoría",["LAPTOPS","DESKTOPS","MONITORS","GAMING","MULTIMEDIA","STORAGE","NETWORKING","ACCESSORIES & OTHERS","REFURBISHED","OTHER"])
+            subcat=st.text_input("Subcategoría")
+        with b:
+            cond=st.selectbox("Condición",["NEW","REFURBISHED","OFF-LEASE"])
+            stock=st.number_input("Stock *",min_value=0.0,value=0.0,step=1.0)
+            cost=st.number_input("Costo USD *",min_value=0.0,value=0.0,step=1.0)
+            moq=st.number_input("MOQ",min_value=0.0,value=1.0,step=1.0)
+        with c:
+            supplier=st.text_input("Fuente / proveedor manual",value="MANUAL")
+            code=st.text_input("Código para sufijo",value="MAN")
+            eta=st.text_input("ETA")
+            processor=st.text_input("Procesador")
+            ram=st.text_input("RAM")
+            storage=st.text_input("Almacenamiento")
+            screen=st.text_input("Pantalla")
+        desc=st.text_area("Modelo y descripción *")
+        submitted=st.form_submit_button("Guardar producto manual",type="primary")
+        if submitted:
+            if not bi.strip() or not desc.strip() or cost<=0 or stock<=0:
+                st.error("Completa ITEM, descripción, costo y stock.")
+                return
+            if offers is not None and not offers.empty:
+                existing=offers[offers["ITEM_BASE"].astype(str).str.upper()==bi.strip().upper()]
+                if not existing.empty:
+                    st.warning(f"Este ITEM ya existe en {existing['Proveedor'].nunique()} fuente(s). Se guardará como una oferta adicional y competirá por mejor costo.")
+            add_manual_product({"base_item":bi.strip().upper(),"supplier_name":supplier.strip() or "MANUAL","supplier_code":code.strip().upper() or "MAN",
+                "brand":brand,"category":category,"subcategory":subcat,"description":desc,"condition":cond,"processor":processor,"ram":ram,
+                "storage":storage,"screen":screen,"stock":stock,"cost":cost,"moq":moq,"eta":eta})
+            st.success("Producto manual guardado.")
+            st.rerun()
+
+
+logo_path=next((p for p in [APP_DIR/"logo.png",APP_DIR/"Logo.png",Path.cwd()/"logo.png"] if p.exists()),None)
 if logo_path:
     c1,c2=st.columns([0.7,5.3],vertical_alignment="center")
     with c1: st.image(str(logo_path),width=84)
     with c2:
         st.markdown('<div class="main-header">Motech Miami — Price List Manager</div>',unsafe_allow_html=True)
-        st.markdown('<div class="sub-header">Panel interno · Importación, selección de proveedor y preparación de la lista pública</div>',unsafe_allow_html=True)
+        st.markdown('<div class="sub-header">Panel interno · Historial, alertas y publicación</div>',unsafe_allow_html=True)
 else:
     st.markdown('<div class="main-header">Motech Miami — Price List Manager</div>',unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Panel interno · Importación, selección de proveedor y preparación de la lista pública</div>',unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Panel interno · Historial, alertas y publicación</div>',unsafe_allow_html=True)
 
 master=load_supplier_master()
 with st.sidebar:
     st.header("Carga diaria")
     uploaded_files=st.file_uploader("Subir listas Excel de proveedores",type=["xlsx","xls"],accept_multiple_files=True)
-    if master.empty: st.warning("No se encontró supplier_master.xlsx. MOQ/ETA/código se usarán solo si vienen en el archivo.")
+    if master.empty: st.warning("No se encontró supplier_master.xlsx.")
     else: st.success(f"Maestro de proveedores cargado: {len(master)} registros")
     st.caption("In Transit no se utiliza como stock disponible.")
     st.divider()
-    st.caption("MVP 2 · Los ajustes manuales se conservan durante la sesión actual. La persistencia definitiva se añadirá con la base de datos.")
+    st.caption("MVP 4 · Borrador, historial de 7 días y publicación controlada.")
 
 if not uploaded_files:
-    st.info("Sube las listas de proveedores para comenzar la actualización diaria."); st.stop()
+    page=st.radio("Sección",["Cargar proveedores","Agregar producto manual"],horizontal=True,label_visibility="collapsed")
+    if page=="Cargar proveedores":
+        st.info("Sube las listas de proveedores para comenzar la actualización diaria.")
+    else:
+        st.subheader("Agregar producto manual")
+        render_manual_form("manual_empty")
+        existing=load_manual_products()
+        if existing:
+            st.markdown("#### Productos manuales activos")
+            st.dataframe(pd.DataFrame(existing)[["id","base_item","description","stock","cost","moq","eta"]],use_container_width=True,hide_index=True,
+                         column_config={"cost":st.column_config.NumberColumn(format="$%.2f")})
+    st.stop()
 
 frames=[]; logs=[]
 for f in uploaded_files:
@@ -970,164 +1375,182 @@ for f in uploaded_files:
     else:
         frames.append(d)
     logs.append(info)
+manual_df=manual_products_frame()
+if not manual_df.empty: frames.append(manual_df)
 
 log_df=pd.DataFrame(logs)
 if not frames:
-    st.error("No hay productos válidos para procesar. Verifica los archivos Excel.")
+    st.error("No hay productos válidos para procesar.")
     st.dataframe(log_df,use_container_width=True,hide_index=True)
     st.stop()
 
-df_all=pd.concat(frames,ignore_index=True)
+df_all=pd.concat(frames,ignore_index=True,sort=False)
 offers=prepare_offers(df_all,master)
-winners,alternatives=select_winners(offers)
+overrides=load_overrides()
+winners,alternatives=select_winners(offers,overrides)
+issues=build_review_issues(offers,winners,log_df)
 
-valid_files=int((log_df["Productos"]>0).sum()); review_files=int((log_df["Productos"]<=0).sum())
-hidden_count=int(winners["Oculto"].sum()) if not winners.empty and "Oculto" in winners else 0
-manual_count=int(winners["Precio_Manual"].sum()) if not winners.empty and "Precio_Manual" in winners else 0
-kpi_html=(f'<div class="kpi-strip"><div class="kpi-box"><div class="kpi-value">{valid_files}</div><div class="kpi-label">Archivos válidos</div></div>'
-          f'<div class="kpi-box"><div class="kpi-value">{len(winners):,}</div><div class="kpi-label">Productos seleccionados</div></div>'
-          f'<div class="kpi-box"><div class="kpi-value">{manual_count}</div><div class="kpi-label">Precios manuales</div></div>'
-          f'<div class="kpi-box"><div class="kpi-value">{hidden_count}</div><div class="kpi-label">Productos ocultos</div></div></div>')
-st.markdown(kpi_html,unsafe_allow_html=True)
+valid_files=int((log_df["Productos"]>0).sum()) if not log_df.empty else 0
+review_count=len(issues)
+manual_price_count=int(winners["Precio_Manual"].sum()) if not winners.empty else 0
+manual_products_count=len(load_manual_products())
+last_pub=latest_publication_run()
+last_pub_label=last_pub["published_at"].replace("T"," ") if last_pub else "Nunca"
+st.markdown(
+    f'<div class="kpi-strip">'
+    f'<div class="kpi-box"><div class="kpi-value">{valid_files}</div><div class="kpi-label">Archivos válidos</div></div>'
+    f'<div class="kpi-box"><div class="kpi-value">{len(winners):,}</div><div class="kpi-label">Productos seleccionados</div></div>'
+    f'<div class="kpi-box"><div class="kpi-value">{review_count}</div><div class="kpi-label">Revisión requerida</div></div>'
+    f'<div class="kpi-box"><div class="kpi-value">{manual_products_count}</div><div class="kpi-label">Productos manuales</div></div>'
+    f'</div>', unsafe_allow_html=True)
 
-page=st.radio("Sección",["Productos","Resultado de importación","Revisión requerida"],horizontal=True,label_visibility="collapsed")
+page=st.radio("Sección",["Productos","Revisión requerida","Resumen y publicación","Agregar producto manual","Resultado de importación"],horizontal=True,label_visibility="collapsed")
 
 if page=="Resultado de importación":
     st.subheader("Resultado de importación")
     st.dataframe(log_df,use_container_width=True,hide_index=True)
-    if not log_df[log_df["Productos"]<=0].empty:
-        st.warning("Los archivos marcados para revisión no aportaron productos al borrador.")
+    st.stop()
+
+if page=="Resumen y publicación":
+    st.subheader("Resumen antes de publicar")
+    latest=latest_publication_items()
+    prev_keys=set(latest["product_key"].astype(str)) if not latest.empty else set()
+    curr_visible=winners[~winners["Oculto"]].copy() if not winners.empty else winners.copy()
+    curr_keys=set(curr_visible["PRODUCT_KEY"].astype(str)) if not curr_visible.empty else set()
+    new_count=len(curr_keys-prev_keys)
+    removed_count=len(prev_keys-curr_keys)
+    price_changes=0; supplier_changes=0
+    if not latest.empty and not curr_visible.empty:
+        prev_map={r["product_key"]:r for _,r in latest.iterrows()}
+        for _,r in curr_visible.iterrows():
+            p=prev_map.get(r["PRODUCT_KEY"])
+            if p is None: continue
+            if pd.notna(r.get("Precio_Publicado")) and pd.notna(p.get("published_price")) and abs(float(r["Precio_Publicado"])-float(p["published_price"]))>0.005: price_changes+=1
+            if safe_text(r.get("Proveedor"))!=safe_text(p.get("supplier")): supplier_changes+=1
+    c1,c2,c3,c4=st.columns(4)
+    c1.metric("Productos nuevos",new_count)
+    c2.metric("Productos retirados",removed_count)
+    c3.metric("Cambios de precio",price_changes)
+    c4.metric("Cambios de proveedor",supplier_changes)
+    c5,c6,c7,c8=st.columns(4)
+    c5.metric("HOT DEALS",int(curr_visible["HOT_DEAL"].fillna(False).sum()) if "HOT_DEAL" in curr_visible else 0)
+    c6.metric("NEW ARRIVALS",int(curr_visible["NEW_ARRIVAL"].fillna(False).sum()) if "NEW_ARRIVAL" in curr_visible else 0)
+    c7.metric("LOW STOCK",int(curr_visible["LOW_STOCK"].fillna(False).sum()) if "LOW_STOCK" in curr_visible else 0)
+    c8.metric("Revisión requerida",len(issues))
+    st.caption(f"Última publicación: {last_pub_label}")
+    if len(issues)>0:
+        st.warning("Hay incidencias pendientes. Revísalas antes de publicar la actualización.")
+    else:
+        st.success("No hay incidencias pendientes de revisión.")
+    preview_cols=["ITEM_PUBLICO","Descripcion","Proveedor","Stock_Publico","Costo","Precio_Publicado","HOT_DEAL","NEW_ARRIVAL","LOW_STOCK"]
+    preview=curr_visible[[c for c in preview_cols if c in curr_visible.columns]].copy()
+    st.dataframe(preview.head(250),use_container_width=True,hide_index=True,column_config={"Costo":st.column_config.NumberColumn(format="$%.2f"),"Precio_Publicado":st.column_config.NumberColumn(format="$%.2f")})
+    confirm=st.checkbox("Confirmo que revisé el resumen y deseo reemplazar la versión pública actual.")
+    disabled=(len(issues)>0) or (not confirm)
+    if st.button("PUBLICAR ACTUALIZACIÓN",type="primary",use_container_width=True,disabled=disabled):
+        run_id,ts=publish_snapshot(curr_visible)
+        st.success(f"Actualización publicada correctamente. Versión #{run_id} · {ts.replace('T',' ')}")
+        st.rerun()
+    st.stop()
+
+if page=="Agregar producto manual":
+    st.subheader("Agregar producto manual")
+    render_manual_form("manual_main",offers)
+    existing=load_manual_products()
+    if existing:
+        st.markdown("#### Productos manuales activos")
+        md=pd.DataFrame(existing)
+        st.dataframe(md[["id","base_item","supplier_name","description","stock","cost","moq","eta"]],use_container_width=True,hide_index=True,
+                     column_config={"cost":st.column_config.NumberColumn(format="$%.2f")})
+        choices=[""]+[f'{x["id"]} — {x["base_item"]} — {x["description"][:65]}' for x in existing]
+        selected=st.selectbox("Desactivar producto manual",choices)
+        if selected and st.button("Desactivar seleccionado"):
+            deactivate_manual_product(int(selected.split(" — ",1)[0])); st.rerun()
     st.stop()
 
 if page=="Revisión requerida":
     st.subheader("Revisión requerida")
-    issues=offers[~offers["Elegible"]].copy()
     if issues.empty:
-        st.success("No hay productos con problemas de elegibilidad en esta carga.")
-    else:
-        issues["Motivo"]=""
-        issues.loc[~issues["Elegible_Stock"],"Motivo"]+="Stock <= 20; "
-        issues.loc[~issues["Elegible_MOQ"],"Motivo"]+="MOQ mayor que stock; "
-        v=issues[["Proveedor","ITEM_PUBLICO","Descripcion","Stock_Real","Costo","MOQ_Final","ETA_Final","Motivo"]].copy()
-        v.columns=["Proveedor","ITEM","Descripción","Stock","Costo","MOQ","ETA","Motivo"]
-        st.dataframe(v,use_container_width=True,hide_index=True,
-                     column_config={"Costo":st.column_config.NumberColumn(format="$%.2f")})
+        st.success("No hay incidencias pendientes de revisión.")
+        st.stop()
+    st.dataframe(issues[["Tipo","Producto","Proveedor","Motivo","Detalle"]],use_container_width=True,hide_index=True)
+    opts={f'{r["Tipo"]} · {r["Producto"]} · {r["Motivo"]}':r["ISSUE_KEY"] for _,r in issues.iterrows()}
+    label=st.selectbox("Incidencia",list(opts.keys())); ik=opts[label]
+    note=st.text_input("Nota interna")
+    c1,c2=st.columns(2)
+    with c1:
+        if st.button("Marcar como revisado",type="primary",use_container_width=True):
+            save_review_action(ik,"APROBADO",note); st.rerun()
+    with c2:
+        if st.button("Ignorar esta incidencia",use_container_width=True):
+            save_review_action(ik,"IGNORADO",note); st.rerun()
     st.stop()
 
 st.subheader("Productos seleccionados")
 if winners.empty:
-    st.warning("No hay productos que cumplan las reglas actuales (stock > 20 y MOQ <= stock)."); st.stop()
-
+    st.warning("No hay productos elegibles."); st.stop()
 search=st.text_input("Buscar",placeholder="ITEM, modelo, descripción, procesador, RAM...")
-fc=st.columns(4)
-with fc[0]:
-    cats=["TODAS"]+sorted(x for x in winners["Categoria"].dropna().unique().tolist() if x); cat=st.selectbox("Categoría",cats)
-with fc[1]:
-    providers=["TODOS"]+sorted(winners["Proveedor"].dropna().unique().tolist()); prov=st.selectbox("Proveedor seleccionado",providers)
-with fc[2]:
-    conditions=["TODAS"]+sorted(winners["Condicion_Normalizada"].dropna().unique().tolist()); condition=st.selectbox("Condición",conditions)
-with fc[3]:
-    visibility=st.selectbox("Visibilidad",["TODOS","VISIBLES","OCULTOS"])
-
+f1,f2,f3,f4=st.columns(4)
+with f1: cat=st.selectbox("Categoría",["TODAS"]+sorted(x for x in winners["Categoria"].dropna().unique().tolist() if x))
+with f2: prov=st.selectbox("Proveedor seleccionado",["TODOS"]+sorted(winners["Proveedor"].dropna().unique().tolist()))
+with f3: cond=st.selectbox("Condición",["TODAS"]+sorted(winners["Condicion_Normalizada"].dropna().unique().tolist()))
+with f4: vis=st.selectbox("Visibilidad",["TODOS","VISIBLES","OCULTOS"])
 view=winners.copy()
 if cat!="TODAS": view=view[view["Categoria"]==cat]
 if prov!="TODOS": view=view[view["Proveedor"]==prov]
-if condition!="TODAS": view=view[view["Condicion_Normalizada"]==condition]
-if visibility=="VISIBLES": view=view[~view["Oculto"]]
-elif visibility=="OCULTOS": view=view[view["Oculto"]]
+if cond!="TODAS": view=view[view["Condicion_Normalizada"]==cond]
+if vis=="VISIBLES": view=view[~view["Oculto"]]
+elif vis=="OCULTOS": view=view[view["Oculto"]]
 if search.strip():
     q=search.strip().upper()
     hay=(view["ITEM_PUBLICO"].astype(str)+" "+view["Descripcion"].astype(str)+" "+view["Procesador"].astype(str)+" "+view["RAM"].astype(str)+" "+view["Almacenamiento"].astype(str)).str.upper()
     view=view[hay.str.contains(re.escape(q),na=False)]
+show=view[["Oculto","Categoria","ITEM_PUBLICO","Descripcion","Proveedor","Stock_Real","Stock_Publico","Costo","Costo_Anterior","Variacion_Costo_Pct","Margen_Pct","Precio_Sugerido","Precio_Publicado","Precio_Manual","HOT_DEAL","NEW_ARRIVAL","LOW_STOCK","MOQ_Final","ETA_Final","Alternativas"]].copy()
+show.columns=["Oculto","Categoría","ITEM","Descripción","Proveedor elegido","Stock real","Stock público","Costo","Costo anterior","Variación costo %","Margen %","Precio sugerido","Precio publicado","Manual","HOT DEAL","NEW ARRIVAL","LOW STOCK","MOQ","ETA","Otros proveedores"]
+st.dataframe(show,use_container_width=True,hide_index=True,column_config={
+    "Costo":st.column_config.NumberColumn(format="$%.2f"),"Precio sugerido":st.column_config.NumberColumn(format="$%.2f"),
+    "Precio publicado":st.column_config.NumberColumn(format="$%.2f"),"Costo anterior":st.column_config.NumberColumn(format="$%.2f"),
+    "Variación costo %":st.column_config.NumberColumn(format="%.1f%%"),"Margen %":st.column_config.NumberColumn(format="%.2f%%")})
 
-show=view[["Oculto","Categoria","ITEM_PUBLICO","Descripcion","Proveedor","Stock_Real","Stock_Publico","Costo","Margen_Pct","Precio_Sugerido","Precio_Publicado","Precio_Manual","MOQ_Final","ETA_Final","Alternativas"]].copy()
-show.columns=["Oculto","Categoría","ITEM","Descripción","Proveedor elegido","Stock real","Stock público","Costo","Margen %","Precio sugerido","Precio publicado","Manual","MOQ","ETA","Otros proveedores"]
-st.dataframe(show,use_container_width=True,hide_index=True,
-             column_config={
-                 "Costo":st.column_config.NumberColumn(format="$%.2f"),
-                 "Precio sugerido":st.column_config.NumberColumn(format="$%.2f"),
-                 "Precio publicado":st.column_config.NumberColumn(format="$%.2f"),
-                 "Margen %":st.column_config.NumberColumn(format="%.2f%%"),
-             })
-
-st.divider()
-st.markdown("### Ajustar producto")
+st.divider(); st.markdown("### Ajustar producto")
 labels={f'{r["ITEM_PUBLICO"]} — {safe_text(r["Descripcion"])[:82]}':r["PRODUCT_KEY"] for _,r in view.iterrows()}
-if not labels:
-    st.info("No hay productos con los filtros actuales.")
-    st.stop()
-
-selected_label=st.selectbox("Producto",list(labels.keys()))
-key=labels[selected_label]
-selected_row=winners[winners["PRODUCT_KEY"]==key].iloc[0]
-opts=alternatives.get(key,pd.DataFrame()).copy()
-
+if not labels: st.stop()
+sl=st.selectbox("Producto",list(labels.keys())); key=labels[sl]
+row=winners[winners["PRODUCT_KEY"]==key].iloc[0]; opts=alternatives.get(key,pd.DataFrame()).copy(); ov=load_overrides().get(key,{})
 left,right=st.columns([1.15,1])
 with left:
     st.markdown("#### Oferta seleccionada")
-    st.write(f'**ITEM:** {selected_row["ITEM_PUBLICO"]}')
-    st.write(f'**Proveedor:** {selected_row["Proveedor"]}')
-    st.write(f'**Stock real:** {int(selected_row["Stock_Real"])}  ·  **Stock público:** {selected_row["Stock_Publico"]}')
-    st.write(f'**Costo:** ${float(selected_row["Costo"]):,.2f}  ·  **MOQ:** {selected_row["MOQ_Final"]}  ·  **ETA:** {selected_row["ETA_Final"]}')
-    st.caption(safe_text(selected_row["Descripcion"]))
-
-    if not opts.empty and len(opts)>1:
-        st.markdown("#### Otros proveedores")
-        alt=opts.copy()
-        alt["Seleccionado"]=[True]+[False]*(len(alt)-1)
+    st.write(f'**ITEM:** {row["ITEM_PUBLICO"]}')
+    st.write(f'**Proveedor:** {row["Proveedor"]}')
+    st.write(f'**Stock real:** {int(row["Stock_Real"])} · **Stock público:** {row["Stock_Publico"]}')
+    st.write(f'**Costo:** ${float(row["Costo"]):,.2f} · **MOQ:** {row["MOQ_Final"]} · **ETA:** {row["ETA_Final"]}')
+    badges=[]
+    if bool(row.get("HOT_DEAL",False)): badges.append("🔥 HOT DEAL")
+    if bool(row.get("NEW_ARRIVAL",False)): badges.append("🆕 NEW ARRIVAL")
+    if bool(row.get("LOW_STOCK",False)): badges.append("⚠️ LOW STOCK")
+    if badges: st.info(" · ".join(badges))
+    if pd.notna(row.get("Variacion_Costo_Pct")): st.caption(f'Cambio de costo vs. última publicación: {float(row["Variacion_Costo_Pct"]):+.1f}%')
+    st.caption(safe_text(row["Descripcion"]))
+    if len(opts)>1:
+        alt=opts.copy(); alt["Seleccionado"]=[True]+[False]*(len(alt)-1)
         av=alt[["Seleccionado","Proveedor","ITEM_PUBLICO","Stock_Real","Costo","MOQ_Final","ETA_Final"]].copy()
         av.columns=["Seleccionado","Proveedor","ITEM","Stock","Costo","MOQ","ETA"]
-        st.dataframe(av,use_container_width=True,hide_index=True,
-                     column_config={"Costo":st.column_config.NumberColumn(format="$%.2f")})
+        st.dataframe(av,use_container_width=True,hide_index=True,column_config={"Costo":st.column_config.NumberColumn(format="$%.2f")})
         first=opts.iloc[0]
-        if (opts.iloc[1:]["Stock_Real"]>=2*first["Stock_Real"]).any():
-            st.info("Alternativa con mayor stock disponible: existe otro proveedor con al menos el doble de stock.")
-        wm=clean_qty(first["MOQ_Final"]); om=pd.to_numeric(opts.iloc[1:]["MOQ_Final"],errors="coerce")
-        if wm is not None and not om.dropna().empty and om.min()<wm:
-            st.info("MOQ más flexible disponible en otro proveedor.")
-    else:
-        st.caption("No hay otros proveedores elegibles para este producto.")
-
+        if (opts.iloc[1:]["Stock_Real"]>=2*first["Stock_Real"]).any(): st.info("Alternativa con mayor stock disponible.")
 with right:
     st.markdown("#### Precio y visibilidad")
-    current_margin=st.session_state.manual_margins.get(key)
-    if current_margin is None:
-        current_margin=default_margin_pct(selected_row.get("Categoria"),selected_row.get("Costo"))
-    margin_default=float(current_margin) if current_margin is not None else 0.0
-    margin=st.number_input("Margen %",min_value=0.0,max_value=100.0,value=margin_default,step=0.5,key=f"margin_{hashlib.md5(key.encode()).hexdigest()[:8]}")
-    suggested=float(selected_row["Costo"])*(1+margin/100)
-    st.metric("Precio sugerido",f"${suggested:,.2f}")
-    existing_manual=st.session_state.manual_prices.get(key)
-    price_default=float(existing_manual) if existing_manual is not None else float(suggested)
-    published=st.number_input("Precio publicado",min_value=0.01,value=price_default,step=1.0,format="%.2f",key=f"price_{hashlib.md5(key.encode()).hexdigest()[:8]}")
-    hidden=key in st.session_state.hidden_products
-    hidden_input=st.checkbox("Ocultar este producto de la lista pública",value=hidden,key=f"hidden_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    margin_current=ov.get("manual_margin")
+    if margin_current is None: margin_current=default_margin_pct(row.get("Categoria"),row.get("Costo"))
+    margin=st.number_input("Margen %",min_value=0.0,max_value=100.0,value=float(margin_current or 0),step=0.5,key=f"m3m_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    suggested=float(row["Costo"])*(1+margin/100); st.metric("Precio sugerido",f"${suggested:,.2f}")
+    pub=st.number_input("Precio publicado",min_value=0.01,value=float(ov.get("manual_price") if ov.get("manual_price") is not None else suggested),step=1.0,format="%.2f",key=f"m3p_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    hidden=st.checkbox("Ocultar este producto de la lista pública",value=bool(ov.get("hidden",0)),key=f"m3h_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    cat_override=st.text_input("Categoría manual (opcional)",value=safe_text(ov.get("category_override")),key=f"m3c_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    sub_override=st.text_input("Subcategoría manual (opcional)",value=safe_text(ov.get("subcategory_override")),key=f"m3s_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    if st.button("Guardar cambios",type="primary",use_container_width=True):
+        manual_price=float(pub) if abs(float(pub)-float(suggested))>0.005 else None
+        save_override(key,manual_price,float(margin),hidden,cat_override.strip() or None,sub_override.strip() or None)
+        st.success("Cambios guardados."); st.rerun()
 
-    csave,creset=st.columns(2)
-    with csave:
-        if st.button("Guardar cambios",type="primary",use_container_width=True):
-            st.session_state.manual_margins[key]=float(margin)
-            # Se considera override manual solo si difiere del sugerido.
-            if abs(float(published)-float(suggested))>0.005:
-                st.session_state.manual_prices[key]=float(published)
-            else:
-                st.session_state.manual_prices.pop(key,None)
-            if hidden_input:
-                st.session_state.hidden_products.add(key)
-            else:
-                st.session_state.hidden_products.discard(key)
-            st.success("Cambios guardados en el borrador de esta sesión.")
-            st.rerun()
-    with creset:
-        if st.button("Restablecer",use_container_width=True):
-            st.session_state.manual_prices.pop(key,None)
-            st.session_state.manual_margins.pop(key,None)
-            st.session_state.hidden_products.discard(key)
-            st.rerun()
-
-    if existing_manual is not None:
-        st.warning("Precio modificado manualmente.")
-    if hidden:
-        st.warning("Este producto está oculto y no deberá publicarse.")
-
-st.caption("MVP 2: edición manual de precio, margen y visibilidad + comparación de proveedores. Los cambios aún son de borrador y no se publican al cliente.")
+st.caption("SQLite mantiene ajustes e historial durante la vida del contenedor. En Streamlit Community Cloud todavía migraremos la persistencia a una base externa antes de producción.")
