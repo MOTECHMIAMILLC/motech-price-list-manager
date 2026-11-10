@@ -40,15 +40,5 @@ jobs:
           actual = hashlib.sha256(source.encode("utf-8")).hexdigest()
           assert actual == expected, (actual, expected)
           compile(source, "Motech_Price_List_Manager.py", "exec")
-          print("=== ISSUE/UPLOAD DIAGNOSTIC ===")
-          lines = source.splitlines()
-          needles = ["issues.append", "build_review", "review", "file_errors", "valid_files", "parse_supplier", "CELLUTECH", "ALL PLUS", "Archivos válidos", "Revisión requerida"]
-          for i,line in enumerate(lines):
-              if any(n.lower() in line.lower() for n in needles):
-                  start=max(0,i-2); end=min(len(lines),i+4)
-                  print(f"--- lines {start+1}-{end} ---")
-                  for j in range(start,end):
-                      print(f"{j+1}: {lines[j]}")
-          print("=== END DIAGNOSTIC ===")
           print("Validation OK")
           PY
