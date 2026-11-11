@@ -330,4 +330,142 @@ if _norm_old not in source:
     raise RuntimeError("Category normalization target not found.")
 source=source.replace(_norm_old,_norm_new,1)
 
+
+# Classifier V2: structured product-family classification used by the daily catalog.
+_v2_anchor = '''    df["Categoria"]=df.apply(lambda r:normalize_category_name(clasificar_categoria(r["Descripcion"],r["SKU"],r.get("Condicion",""))),axis=1)
+'''
+_v2_code = r'''
+def clasificar_categoria_v2(descripcion, sku="", condicion=""):
+    text=(" ".join([safe_text(descripcion),safe_text(sku),safe_text(condicion)])).upper()
+    text=re.sub(r"[\-_/,;:()\[\]]+"," ",text)
+    text=re.sub(r"\s+"," ",text).strip()
+
+    # 1) Commercial condition has priority.
+    refurb_terms=[
+        "REFURBISHED","REFURB","RENEWED","RECERTIFIED","RECONDITIONED",
+        "OFF LEASE","OFF-LEASE","CERTIFIED REFURBISHED"
+    ]
+    if any(t in text for t in refurb_terms):
+        return "REFURBISHED"
+
+    # 2) Gaming families.
+    gaming_terms=[
+        "PLAYSTATION"," PS5 "," PS4 ","XBOX","NINTENDO","SWITCH 2","NINTENDO SWITCH",
+        "JOY CON","JOYCON","META QUEST","QUEST 3S","QUEST 3 ","QUEST 2 ",
+        "STEAM DECK","ROG ALLY","LEGION GO",
+        "GAMING LAPTOP","GAMING DESKTOP","GAMING PC","GAMING HEADSET",
+        "GAMING MOUSE","GAMING KEYBOARD","ALIENWARE","PREDATOR","VICTUS",
+        "ZEPHYRUS","CYBORG","RAIDER","KATANA","STRIX","SCAR","ROG "," TUF ","NITRO"," LOQ "
+    ]
+    if any(t in f" {text} " for t in gaming_terms):
+        return "GAMING"
+
+    # 3) Printers/peripherals before desktop, because many printers say All-in-One.
+    printer_terms=[
+        "PRINTER","INKJET","LASERJET","LASER PRINTER","MULTIFUNCTION","OFFICEJET",
+        "DESKJET","ECOTANK","MAXIFY","PIXMA","IMAGECLASS","BROTHER MFC","BROTHER HL",
+        "LABEL PRINTER","PHOTO PRINTER","SCANNER"
+    ]
+    if any(t in text for t in printer_terms):
+        return "ACCESSORIES & OTHERS"
+
+    # 4) Networking.
+    networking_terms=[
+        "STARLINK","ROUTER","MESH WIFI","MESH WI FI","WIFI SYSTEM","WI FI SYSTEM",
+        "ACCESS POINT","ETHERNET SWITCH","NETWORK SWITCH","GIGABIT SWITCH",
+        "MODEM","FIREWALL","GATEWAY","UNIFI","UBIQUITI","OMADA",
+        "NETWORK ADAPTER","NETWORKING"
+    ]
+    if any(t in text for t in networking_terms):
+        return "NETWORKING"
+
+    # 5) Monitors/displays. Avoid laptops by requiring monitor-family vocabulary.
+    monitor_terms=[
+        "MONITOR","GAMING MONITOR","PORTABLE MONITOR","CURVED MONITOR",
+        "LCD MONITOR","LED MONITOR","OLED MONITOR","DISPLAY MONITOR"
+    ]
+    if any(t in text for t in monitor_terms):
+        return "MONITORS"
+
+    # 6) Storage.
+    storage_terms=[
+        " SSD ","SOLID STATE DRIVE"," NVME "," M.2 ","HARD DRIVE","HDD",
+        "EXTERNAL DRIVE","EXTERNAL SSD","EXTERNAL HDD","USB FLASH","FLASH DRIVE",
+        "MICROSD","MICRO SD","SD CARD","MEMORY CARD","NAS DRIVE"
+    ]
+    if any(t in f" {text} " for t in storage_terms):
+        return "STORAGE"
+
+    # 7) Multimedia / audio / streaming / smart speakers.
+    multimedia_terms=[
+        "AMAZON ECHO","ECHO DOT","ECHO SHOW","ALEXA","FIRE TV","FIRE STICK",
+        "CHROMECAST","ROKU","APPLE TV","STREAMING DEVICE","MEDIA PLAYER","SMART TV BOX",
+        "SPEAKER","SOUNDBAR","SOUND BAR","HEADPHONE","HEADPHONES","EARBUD","EARBUDS",
+        "AIRPODS","BEATS","TRUE WIRELESS","WIRELESS EARBUD","TWS",
+        "HOME POD","HOMEPOD","BLUETOOTH SPEAKER","MICROPHONE","PROJECTOR"
+    ]
+    if any(t in text for t in multimedia_terms):
+        return "MULTIMEDIA"
+
+    # 8) Desktop / mini PC / workstation / Apple desktop families.
+    desktop_terms=[
+        "DESKTOP","DESKTOP PC","MINI PC","MINI COMPUTER","MINI DESKTOP","MICRO PC",
+        "SMALL FORM FACTOR"," SFF ","TOWER PC","WORKSTATION","THINKCENTRE","THINKCENTER",
+        "OPTIPLEX","PRODESK","ELITEDESK","THINKSTATION","PRECISION TOWER",
+        "PRECISION WORKSTATION","HP Z2","HP Z4","HP Z6","HP Z8","NUC",
+        "IMAC","MAC MINI","MAC STUDIO"
+    ]
+    if any(t in f" {text} " for t in desktop_terms):
+        return "DESKTOPS"
+
+    # Generic all-in-one computer only after printers have been excluded.
+    if ("ALL IN ONE" in text or "ALL IN ONE PC" in text or " AIO " in f" {text} ") and \
+       any(t in text for t in ["INTEL","AMD","RYZEN","CORE","MEMORY","RAM","SSD","WINDOWS","MAC"]):
+        return "DESKTOPS"
+
+    # 9) Laptop families and chassis words.
+    laptop_terms=[
+        "LAPTOP","NOTEBOOK","CHROMEBOOK","MACBOOK","ULTRABOOK",
+        "THINKPAD","IDEAPAD","LATITUDE","INSPIRON","VOSTRO","PROBOOK","ELITEBOOK",
+        "ZBOOK","PAVILION","ENVY","SPECTRE","OMNIBOOK","VIVOBOOK","ZENBOOK",
+        "EXPERTBOOK","ASPIRE","SWIFT","TRAVELMATE","LG GRAM","SURFACE LAPTOP",
+        "DELL PRO ","YOGA","L210MA","L510MA"
+    ]
+    if any(t in text for t in laptop_terms):
+        return "LAPTOPS"
+
+    # 10) Laptop fallback from specs: mobile CPU + RAM + laptop-size screen.
+    cpu_mobile=bool(re.search(
+        r"\b(?:INTEL\s+)?(?:N\d{3,4}|N\d{2,3}|CELERON|PENTIUM|CORE\s+(?:ULTRA\s+)?[3579]|I[3579]\s*\-?\s*\d{3,5}[A-Z]{0,2}|"
+        r"RYZEN(?:\s+AI)?\s+[3579]\s*\d{3,5}[A-Z]{0,2}|SNAPDRAGON\s+X)\b", text))
+    ram=bool(re.search(r"\b(?:4|8|12|16|24|32|48|64|96|128)\s*GB\b",text))
+    laptop_screen=bool(re.search(r"\b(?:10|11|12|13|14|15|16|17)(?:\.\d)?\s*(?:INCH|INCHES|IN|\"|″)\b",text))
+    if cpu_mobile and ram and laptop_screen:
+        return "LAPTOPS"
+
+    # 11) Generic desktop fallback: CPU + RAM + storage, but no laptop-size display.
+    storage_spec=bool(re.search(r"\b(?:128|256|512|1024|1TB|2TB|4TB)\s*(?:GB|TB)?\s*(?:SSD|NVME|HDD)?\b",text))
+    if cpu_mobile and ram and storage_spec and not laptop_screen:
+        return "DESKTOPS"
+
+    # 12) Wearables/tablets/general accessories.
+    accessory_terms=[
+        "APPLE WATCH","GALAXY WATCH","SMARTWATCH","SMART WATCH","AIRTAG","AIR TAG",
+        "IPAD","TABLET","GALAXY TAB","SURFACE PRO","MOUSE","KEYBOARD","CABLE",
+        "STYLUS","PENCIL","CASE","COVER","DOCK","DOCKING","ADAPTER","ADAPTOR",
+        "CHARGER","POWER SUPPLY","WEBCAM","USB HUB","BACKPACK","SLEEVE",
+        "REMOTE CONTROL","GAME CONTROLLER"
+    ]
+    if any(t in text for t in accessory_terms):
+        return "ACCESSORIES & OTHERS"
+
+    return "ACCESSORIES & OTHERS"
+
+
+    df["Categoria"]=df.apply(lambda r:normalize_category_name(clasificar_categoria_v2(r["Descripcion"],r["SKU"],r.get("Condicion",""))),axis=1)
+'''
+if _v2_anchor not in source:
+    raise RuntimeError("Classifier V2 insertion target not found.")
+source=source.replace(_v2_anchor,_v2_code,1)
+
 exec(compile(source, "Motech_Price_List_Manager.py", "exec"), globals(), globals())
