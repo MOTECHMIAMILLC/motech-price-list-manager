@@ -40,17 +40,5 @@ jobs:
           actual = hashlib.sha256(source.encode("utf-8")).hexdigest()
           assert actual == expected, (actual, expected)
           compile(source, "Motech_Price_List_Manager.py", "exec")
-          print("=== MANUAL COST DIAGNOSTIC ===")
-          lines=source.splitlines()
-          needles=["CREATE TABLE IF NOT EXISTS product_overrides","def load_overrides","def save_override","Precio y visibilidad","manual_margin","manual_price"]
-          hits=[]
-          for i,line in enumerate(lines):
-              if any(n.lower() in line.lower() for n in needles):
-                  hits.append(i)
-          for i in sorted(set(hits)):
-              print(f"--- around {i+1} ---")
-              for j in range(max(0,i-8),min(len(lines),i+18)):
-                  print(f"{j+1}: {lines[j]}")
-          print("=== END MANUAL COST DIAGNOSTIC ===")
           print("Validation OK")
           PY
