@@ -158,6 +158,18 @@ def render_margin_config(prefix="margin_cfg"):
         "LAPTOPS","DESKTOPS","MONITORS","GAMING","MULTIMEDIA",
         "STORAGE","NETWORKING","ACCESSORIES & OTHERS","REFURBISHED"
     ]
+
+    # Show every commercial category in the editor, even when no margin
+    # has been configured yet. Existing saved rules are preserved.
+    present={safe_text(r.get("Categoria")).upper().strip() for r in rules}
+    for cat in canonical_categories:
+        if cat not in present:
+            rules.append({
+                "Categoria":cat,
+                "Costo_Min":0.0,
+                "Costo_Max":999999.0,
+                "Margen_Pct":None,
+            })
     draft=globals().get("winners")
     coverage_rows=[]
     for cat in canonical_categories:
@@ -215,7 +227,11 @@ def render_margin_config(prefix="margin_cfg"):
             try:
                 mn=float(row.get("Costo_Min") if pd.notna(row.get("Costo_Min")) else 0)
                 mx=float(row.get("Costo_Max") if pd.notna(row.get("Costo_Max")) else 999999)
-                pct=float(row.get("Margen_Pct"))
+                pct_raw=row.get("Margen_Pct")
+                if pd.isna(pct_raw):
+                    # Blank margin means category intentionally left pending.
+                    continue
+                pct=float(pct_raw)
             except Exception:
                 errors.append(f"Fila {idx+1}: valores incompletos.")
                 continue
