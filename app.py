@@ -405,7 +405,8 @@ _v2_code = r'''
             "CHROMECAST","ROKU","APPLE TV","STREAMING DEVICE","MEDIA PLAYER","SMART TV BOX",
             "SPEAKER","SOUNDBAR","SOUND BAR","HEADPHONE","HEADPHONES","EARBUD","EARBUDS",
             "AIRPODS","BEATS","TRUE WIRELESS","WIRELESS EARBUD","TWS",
-            "HOME POD","HOMEPOD","BLUETOOTH SPEAKER","MICROPHONE","PROJECTOR"
+            "HOME POD","HOMEPOD","BLUETOOTH SPEAKER","MICROPHONE","PROJECTOR",
+        "IPAD","GALAXY TAB","ANDROID TABLET","TABLET","FIRE HD","FIRE TABLET"
         ]
         if any(t in text for t in multimedia_terms):
             return "MULTIMEDIA"
@@ -432,7 +433,7 @@ _v2_code = r'''
             "THINKPAD","IDEAPAD","LATITUDE","INSPIRON","VOSTRO","PROBOOK","ELITEBOOK",
             "ZBOOK","PAVILION","ENVY","SPECTRE","OMNIBOOK","VIVOBOOK","ZENBOOK",
             "EXPERTBOOK","ASPIRE","SWIFT","TRAVELMATE","LG GRAM","SURFACE LAPTOP",
-            "DELL PRO ","YOGA","L210MA","L510MA","14-EM","14-EP","14-DQ","14-CF","14S-","15-FD","15-FC","15-DY","15S-","255 G","250 G"
+            "DELL PRO ","YOGA","SURFACE PRO","L210MA","L510MA","14-EM","14-EP","14-DQ","14-CF","14S-","15-FD","15-FC","15-DY","15S-","255 G","250 G"
         ]
         if any(t in text for t in laptop_terms):
             return "LAPTOPS"
@@ -454,7 +455,7 @@ _v2_code = r'''
         # 12) Wearables/tablets/general accessories.
         accessory_terms=[
             "APPLE WATCH","GALAXY WATCH","SMARTWATCH","SMART WATCH","AIRTAG","AIR TAG",
-            "IPAD","TABLET","GALAXY TAB","SURFACE PRO","MOUSE","KEYBOARD","CABLE",
+            "MOUSE","KEYBOARD","CABLE",
             "STYLUS","PENCIL","CASE","COVER","DOCK","DOCKING","ADAPTER","ADAPTOR",
             "CHARGER","POWER SUPPLY","WEBCAM","USB HUB","BACKPACK","SLEEVE",
             "REMOTE CONTROL","GAME CONTROLLER"
