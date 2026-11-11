@@ -710,4 +710,70 @@ if _ui_old not in source:
     raise RuntimeError("product edit UI target not found.")
 source=source.replace(_ui_old,_ui_new,1)
 
+
+# Finalize approved margin policy migration and manual override behavior.
+_margin_load_old = '''            if isinstance(data,list):
+                return data
+'''
+_margin_load_new = '''            if isinstance(data,list):
+                configured_non_core=[]
+                for r in data:
+                    cat=safe_text(r.get("Categoria")).upper().strip()
+                    pct=r.get("Margen_Pct")
+                    if cat not in {"LAPTOPS","LAPTOP","NOTEBOOKS","DESKTOPS","DESKTOPS & PC","DESKTOP"} and pd.notna(pct):
+                        configured_non_core.append(r)
+                if configured_non_core:
+                    return data
+                # Legacy configuration only had computers. Adopt the approved
+                # Motech matrix until the operator saves a customized table.
+'''
+if _margin_load_old not in source:
+    raise RuntimeError("Margin migration target not found.")
+source=source.replace(_margin_load_old,_margin_load_new,1)
+
+_margin_save_old = '''        manual_cost=float(cost_edit) if abs(float(cost_edit)-float(provider_cost))>0.005 else None
+        manual_price=float(pub) if abs(float(pub)-float(suggested))>0.005 else None
+        save_override(key,manual_price,float(margin),hidden,cat_override.strip() or None,sub_override.strip() or None,manual_cost=manual_cost)
+'''
+_margin_save_new = '''        manual_cost=float(cost_edit) if abs(float(cost_edit)-float(provider_cost))>0.005 else None
+        automatic_margin=default_margin_pct(row.get("Categoria"),cost_edit)
+        manual_margin=float(margin) if (automatic_margin is None or abs(float(margin)-float(automatic_margin))>0.0001) else None
+        manual_price=float(pub) if abs(float(pub)-float(suggested))>0.005 else None
+        save_override(key,manual_price,manual_margin,hidden,cat_override.strip() or None,sub_override.strip() or None,manual_cost=manual_cost)
+'''
+if _margin_save_old not in source:
+    raise RuntimeError("Manual margin save target not found.")
+source=source.replace(_margin_save_old,_margin_save_new,1)
+
+_cost_caption_old = '''    if ov.get("manual_cost") is not None:
+        st.caption(f"Costo proveedor: USD {provider_cost:,.2f} · Costo manual activo")
+    else:
+        st.caption(f"Costo proveedor: USD {provider_cost:,.2f}")
+
+    margin_current=ov.get("manual_margin")
+'''
+_cost_caption_new = '''    if ov.get("manual_cost") is not None:
+        st.caption(f"Costo proveedor: USD {provider_cost:,.2f} · Costo manual activo")
+        if st.button("Restaurar costo del proveedor",key=f"m3resetcost_{hashlib.md5(key.encode()).hexdigest()[:8]}"):
+            save_override(
+                key,
+                ov.get("manual_price"),
+                ov.get("manual_margin"),
+                bool(ov.get("hidden",0)),
+                ov.get("category_override"),
+                ov.get("subcategory_override"),
+                manual_cost=None,
+            )
+            st.session_state.pop(f"m3cost_{hashlib.md5(key.encode()).hexdigest()[:8]}",None)
+            st.success("Costo del proveedor restaurado.")
+            st.rerun()
+    else:
+        st.caption(f"Costo proveedor: USD {provider_cost:,.2f}")
+
+    margin_current=ov.get("manual_margin")
+'''
+if _cost_caption_old not in source:
+    raise RuntimeError("Manual cost reset target not found.")
+source=source.replace(_cost_caption_old,_cost_caption_new,1)
+
 exec(compile(source, "Motech_Price_List_Manager.py", "exec"), globals(), globals())
