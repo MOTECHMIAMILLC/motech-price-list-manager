@@ -259,4 +259,75 @@ if _category_old not in source:
     raise RuntimeError("Category desktop target not found.")
 source=source.replace(_category_old,_category_new,1)
 
+
+# Broaden product-family classification and canonicalize Motech categories.
+_classify_multimedia_old = '''        "WIRELESS EARBUD", "TRUE WIRELESS", "TWS", "ECHO DOT", "ECHO SHOW", "ALEXA",
+'''
+_classify_multimedia_new = '''        "WIRELESS EARBUD", "TRUE WIRELESS", "TWS", "AMAZON ECHO", " ECHO ", "ECHO DOT", "ECHO SHOW", "ALEXA",
+'''
+if _classify_multimedia_old not in source:
+    raise RuntimeError("Multimedia classifier target not found.")
+source=source.replace(_classify_multimedia_old,_classify_multimedia_new,1)
+
+_gaming_old = '''        "PLAYSTATION", "PS5", "PS4", "XBOX", "NINTENDO", "SWITCH", "JOY-CON", "JOYCON",
+'''
+_gaming_new = '''        "PLAYSTATION", "PS5", "PS4", "XBOX", "NINTENDO", "SWITCH", "JOY-CON", "JOYCON",
+        "META - QUEST", "META QUEST", "QUEST 3S", "QUEST 3 ", "QUEST 2 ",
+'''
+if _gaming_old not in source:
+    raise RuntimeError("Gaming classifier target not found.")
+source=source.replace(_gaming_old,_gaming_new,1)
+
+_desktop_old = '''        "PRECISION TOWER", "PRECISION WORKSTATION", "HP Z2", "HP Z4", "HP Z6", "HP Z8",
+'''
+_desktop_new = '''        "PRECISION TOWER", "PRECISION WORKSTATION", "HP Z2", "HP Z4", "HP Z6", "HP Z8",
+        "IMAC", "MAC MINI", "MAC STUDIO",
+'''
+if _desktop_old not in source:
+    raise RuntimeError("Desktop classifier target not found.")
+source=source.replace(_desktop_old,_desktop_new,1)
+
+_cpu_old = '''    has_cpu = bool(re.search(r"\\b(?:CORE\\s+(?:ULTRA\\s+)?[3579]|I[3579][-\\s]|RYZEN(?:\\s+AI)?\\s+[3579]|SNAPDRAGON\\s+X|CELERON|PENTIUM)\\b", text))
+'''
+_cpu_new = '''    has_cpu = bool(re.search(r"\\b(?:CORE\\s+(?:ULTRA\\s+)?[3579]|I[3579][-\\s]|RYZEN(?:\\s+AI)?\\s+[3579]|SNAPDRAGON\\s+X|CELERON|PENTIUM|INTEL\\s+N\\d{3,4}|N\\d{3,4})\\b", text))
+'''
+if _cpu_old not in source:
+    raise RuntimeError("Laptop CPU fallback target not found.")
+source=source.replace(_cpu_old,_cpu_new,1)
+
+_accessory_old = '''        "USB HUB", "HUB ", "BACKPACK", "SLEEVE",
+'''
+_accessory_new = '''        "USB HUB", "HUB ", "BACKPACK", "SLEEVE", "SMARTWATCH", "SMART WATCH",
+        "APPLE WATCH", "GALAXY WATCH", "AIR TAG", "AIRTAG",
+'''
+if _accessory_old not in source:
+    raise RuntimeError("Accessory classifier target not found.")
+source=source.replace(_accessory_old,_accessory_new,1)
+
+_norm_old = '''def normalize_category_name(v):
+    s=re.sub(r"^[^A-Za-z0-9]+","",safe_text(v)).strip()
+    return s.upper() if s else "OTHER"
+'''
+_norm_new = '''def normalize_category_name(v):
+    s=re.sub(r"^[^A-Za-z0-9]+","",safe_text(v)).strip().upper()
+    aliases={
+        "LAPTOPS":"LAPTOPS","LAPTOP":"LAPTOPS","NOTEBOOKS":"LAPTOPS",
+        "DESKTOPS & PC":"DESKTOPS","DESKTOPS":"DESKTOPS","DESKTOP":"DESKTOPS",
+        "MONITORES":"MONITORS","MONITORS":"MONITORS",
+        "GAMING":"GAMING",
+        "MULTIMEDIA":"MULTIMEDIA",
+        "STORAGE":"STORAGE",
+        "NETWORKING":"NETWORKING",
+        "ACCESORIOS":"ACCESSORIES & OTHERS","ACCESSORIES":"ACCESSORIES & OTHERS",
+        "ACCESSORIES & OTHERS":"ACCESSORIES & OTHERS",
+        "OTROS / VARIOS":"ACCESSORIES & OTHERS","OTHER":"ACCESSORIES & OTHERS",
+        "REFURBISHED":"REFURBISHED",
+        "TABLETS":"ACCESSORIES & OTHERS",
+    }
+    return aliases.get(s,s if s else "ACCESSORIES & OTHERS")
+'''
+if _norm_old not in source:
+    raise RuntimeError("Category normalization target not found.")
+source=source.replace(_norm_old,_norm_new,1)
+
 exec(compile(source, "Motech_Price_List_Manager.py", "exec"), globals(), globals())
