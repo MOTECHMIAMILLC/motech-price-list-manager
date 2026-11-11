@@ -1,835 +1,580 @@
-import os
-import re
-import io
-import html
+import base64
 import hashlib
-import datetime
-from typing import Optional, List, Dict, Tuple
-from pathlib import Path
+import lzma
 
-import pandas as pd
-import streamlit as st
+PAYLOAD = "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"
+source = lzma.decompress(base64.b64decode(PAYLOAD)).decode("utf-8")
+expected_sha256 = "836399f50ac828bd7f529ec3bc192b7df38e265490bab3ed2d51fa027f883172"
+actual_sha256 = hashlib.sha256(source.encode("utf-8")).hexdigest()
+if actual_sha256 != expected_sha256:
+    raise RuntimeError("Application payload integrity check failed.")
 
-st.set_page_config(
-    page_title="Motech Miami — Price List Manager",
-    page_icon="🛍️",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# Hotfix: do not create review items for invalid alternate offers when the same
+# product already has an eligible offer. This keeps "Revisión requerida"
+# focused on issues that can actually block publication.
+_old = '''    bad=offers[~offers["Elegible"]].copy()
+    for _,r in bad.iterrows():
+        blocking=[]
+        if not bool(r.get("Elegible_MOQ")): blocking.append("MOQ mayor que stock")
+        if pd.isna(r.get("Costo")): blocking.append("Costo inválido")
+        if blocking:
+            ik=f'OFFER::{r.get("Proveedor")}::{r.get("PRODUCT_KEY")}::{"/".join(blocking)}'
+            issues.append({"ISSUE_KEY":ik,"Tipo":"PRODUCTO","Producto":r.get("ITEM_PUBLICO"),"Proveedor":r.get("Proveedor"),
+                           "Motivo":"; ".join(blocking),"Detalle":safe_text(r.get("Descripcion"))})
+'''
+_new = '''    eligible_keys=set(offers.loc[offers["Elegible"],"PRODUCT_KEY"].astype(str))
+    bad=offers[(~offers["Elegible"]) & (~offers["PRODUCT_KEY"].astype(str).isin(eligible_keys))].copy()
+    for product_key,grp in bad.groupby("PRODUCT_KEY",dropna=False):
+        r=grp.iloc[0]
+        blocking=[]
+        if bool(r.get("Elegible_Stock")) and not bool(r.get("Elegible_MOQ")): blocking.append("MOQ mayor que stock")
+        if pd.isna(r.get("Costo")): blocking.append("Costo inválido")
+        if blocking:
+            ik=f'PRODUCT::{product_key}::{"/".join(blocking)}'
+            issues.append({"ISSUE_KEY":ik,"Tipo":"PRODUCTO","Producto":r.get("ITEM_PUBLICO"),"Proveedor":r.get("Proveedor"),
+                           "Motivo":"; ".join(blocking),"Detalle":safe_text(r.get("Descripcion"))})
+'''
+if _old not in source:
+    raise RuntimeError("Review hotfix target not found.")
+source = source.replace(_old, _new)
 
-# ============================================================
-# CONFIG / SCHEMA
-# ============================================================
-BASE_COLUMNS = [
-    "Proveedor", "SKU", "SKU_Fuente", "Descripcion", "Condicion", "Precio", "Stock",
-    "Stock_Miami", "Stock_NY", "En_Transito", "MOQ", "ETA", "Ubicacion",
-]
-
-MOTIVATIONAL_QUOTES = [
-    "🚀 'El éxito en las ventas no es cuestión de suerte, sino de constancia y disciplina.'",
-    "💡 'Cada no que recibes te acerca un paso más al sí definitivo.'",
-    "🎯 'Enfoque, determinación y excelente atención: la fórmula para superar cualquier meta.'",
-    "🔥 'Grandes resultados requieren grandes esfuerzos. ¡Hoy es un excelente día para cerrar tratos!'",
-    "⭐ 'El cliente no busca solo un producto, busca la confianza que tú le transmites.'",
-]
-
-PROVIDER_CODES = {
-    "HAIFA": "HAI",
-    "ALL PLUS": "APL",
-    "ALLBRANDS": "ABR",
-    "AQUA CONSUMER": "AQC",
-    "AQUA LAPTOPS": "AQL",
-    "ASE": "ASE",
-    "CELLUTECH": "CEL",
-    "EMOLO": "EMO",
-    "H&Z": "HZ",
-    "INFLUENTIAL": "INF",
-    "PRT": "PRT",
-    "SNK": "SNK",
-    "SUNRISE": "SUN",
-    "TECH SUPPLIER": "TEC",
-    "UNLIMITED": "UNL",
-    "203_TRADING": "203",
-    "WORLDWIDE": "WWD",
-}
-
-# ============================================================
-# UI STYLE
-# ============================================================
-st.markdown("""
-<style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-
-    /* Compacta el espacio superior general */
-    .block-container {padding-top: 1.2rem; padding-bottom: 1.5rem;}
-
-    .main-header {font-size:24px;font-weight:800;color:#1B365D;margin:0 0 1px 0;line-height:1.15;}
-    .sub-header {font-size:13px;color:#666;margin:0;line-height:1.25;}
-    .compact-quote {font-size:12.5px;color:#52606D;font-style:italic;margin-top:5px;line-height:1.25;}
-
-    .kpi-strip {
-        display:grid;
-        grid-template-columns:repeat(4,minmax(0,1fr));
-        gap:8px;
-        margin:8px 0 8px 0;
-    }
-    .kpi-box {
-        border:1px solid #E2E8F0;
-        background:#FFFFFF;
-        border-radius:8px;
-        padding:7px 10px;
-        min-width:0;
-    }
-    .kpi-value {font-size:20px;font-weight:800;color:#1B365D;line-height:1.05;}
-    .kpi-label {font-size:11px;color:#667085;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-
-    .card-deal {background-color:#E8F5E9;border-left:6px solid #2E7D32;padding:12px 16px;
-        border-radius:8px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.08);}
-    .card-title {font-size:15px;font-weight:700;color:#1B5E20;margin-bottom:4px;}
-    .badge-meta {background-color:#F0F4F8;color:#2D3748;padding:3px 6px;border-radius:4px;
-        font-size:12px;margin-right:6px;border:1px solid #CBD5E0;display:inline-block;margin-top:4px;}
-    .badge-savings {background-color:#C8E6C9;color:#1B5E20;font-weight:700;padding:3px 8px;
-        border-radius:4px;font-size:12px;float:right;}
-
-    div[data-testid="stExpander"] {margin-bottom:6px;}
-
-    @media (max-width: 800px) {
-        .kpi-strip {grid-template-columns:repeat(2,minmax(0,1fr));}
-        .main-header {font-size:20px;}
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# ============================================================
-# NORMALIZATION HELPERS
-# ============================================================
-def _norm_col(x) -> str:
-    return re.sub(r"\s+", " ", str(x).strip()).upper()
+# MOQ rule: normally keep the supplier-list MOQ, but if that MOQ is greater
+# than the supplier's available physical stock, fall back to the MOQ from
+# Motech's supplier master. This avoids impossible MOQ conditions while
+# preserving genuine supplier-specific MOQ values when they are usable.
+_moq_old = '''        rm=clean_qty(r.get("MOQ")); re_=safe_text(r.get("ETA"))
+        m=rm if rm is not None else dm
+        e=re_ if re_ else (int(de) if de is not None else "")
+'''
+_moq_new = '''        rm=clean_qty(r.get("MOQ")); re_=safe_text(r.get("ETA"))
+        stock_now=clean_qty(r.get("Stock"))
+        if rm is not None and stock_now is not None and rm > stock_now and dm is not None:
+            m=dm
+        else:
+            m=rm if rm is not None else dm
+        e=re_ if re_ else (int(de) if de is not None else "")
+'''
+if _moq_old not in source:
+    raise RuntimeError("MOQ master fallback target not found.")
+source = source.replace(_moq_old, _moq_new)
 
 
-def clean_price(v) -> Optional[float]:
-    if pd.isna(v):
-        return None
-    s = str(v).strip().upper()
-    if not s or any(x in s for x in ["SOLD OUT", "N/A", "CALL", "TBD"]):
-        return None
-    s = s.replace("$", "").replace(",", "").replace("USD", "").strip()
-    m = re.search(r"-?\d+(?:\.\d+)?", s)
-    if not m:
-        return None
+# First publication bootstrap: do not mark the entire initial catalog as NEW ARRIVAL.
+_newarrival_old = '''        if not hist:
+            new_arrival=True
+'''
+_newarrival_new = '''        if not hist:
+            new_arrival=not latest.empty
+'''
+if _newarrival_old not in source:
+    raise RuntimeError("NEW ARRIVAL bootstrap target not found.")
+source = source.replace(_newarrival_old, _newarrival_new)
+
+# Publication safety: visible products without a published price cannot be published.
+_summary_old = '''    curr_visible=winners[~winners["Oculto"]].copy() if not winners.empty else winners.copy()
+    curr_keys=set(curr_visible["PRODUCT_KEY"].astype(str)) if not curr_visible.empty else set()
+'''
+_summary_new = '''    curr_visible=winners[~winners["Oculto"]].copy() if not winners.empty else winners.copy()
+    missing_price_count=int(curr_visible["Precio_Publicado"].isna().sum()) if (not curr_visible.empty and "Precio_Publicado" in curr_visible.columns) else 0
+    curr_keys=set(curr_visible["PRODUCT_KEY"].astype(str)) if not curr_visible.empty else set()
+'''
+if _summary_old not in source:
+    raise RuntimeError("Publication summary target not found.")
+source = source.replace(_summary_old, _summary_new)
+
+_preview_old = '''    preview_cols=["ITEM_PUBLICO","Descripcion","Proveedor","Stock_Publico","Costo","Precio_Publicado","HOT_DEAL","NEW_ARRIVAL","LOW_STOCK"]
+'''
+_preview_new = '''    if missing_price_count>0:
+        st.error(f"Faltan precios publicados en {missing_price_count} productos visibles. Define margen o precio manual antes de publicar.")
+    preview_cols=["ITEM_PUBLICO","Descripcion","Proveedor","Stock_Publico","Costo","Precio_Publicado","HOT_DEAL","NEW_ARRIVAL","LOW_STOCK"]
+'''
+if _preview_old not in source:
+    raise RuntimeError("Publication preview target not found.")
+source = source.replace(_preview_old, _preview_new)
+
+_disabled_old = '''    disabled=(len(issues)>0) or (not confirm)
+'''
+_disabled_new = '''    disabled=(len(issues)>0) or (missing_price_count>0) or (not confirm)
+'''
+if _disabled_old not in source:
+    raise RuntimeError("Publication button target not found.")
+source = source.replace(_disabled_old, _disabled_new)
+
+
+# Configurable margin rules stored in app_settings.
+_margin_func_old = '''def default_margin_pct(category, cost):
+    cat=safe_text(category).upper()
+    if "LAPTOP" in cat or "NOTEBOOK" in cat or "DESKTOP" in cat:
+        return 2.0
+    return None
+'''
+_margin_func_new = '''def load_margin_rules():
+    import json
+    raw=get_setting("margin_rules_json","")
+    if raw:
+        try:
+            data=json.loads(raw)
+            if isinstance(data,list):
+                return data
+        except Exception:
+            pass
+    return [
+        {"Categoria":"LAPTOPS","Costo_Min":0.0,"Costo_Max":999999.0,"Margen_Pct":2.0},
+        {"Categoria":"DESKTOPS & PC","Costo_Min":0.0,"Costo_Max":999999.0,"Margen_Pct":2.0},
+    ]
+
+
+def default_margin_pct(category, cost):
+    cat=safe_text(category).upper().strip()
     try:
-        p = float(m.group())
-        return p if p > 0 else None
+        c=float(cost)
     except Exception:
-        return None
-
-
-def clean_qty(v) -> Optional[float]:
-    if pd.isna(v):
-        return None
-    if isinstance(v, (int, float)) and not pd.isna(v):
-        return max(float(v), 0)
-    s = str(v).strip().upper().replace(",", "")
-    if s in {"", "-", "N/A", "NA", "NONE", "NAN"}:
-        return 0.0
-    m = re.search(r"\d+(?:\.\d+)?", s)
-    return max(float(m.group()), 0) if m else None
-
-
-def safe_text(v, default="") -> str:
-    if pd.isna(v):
-        return default
-    s = str(v).strip()
-    return "" if s.lower() in {"nan", "none"} else s
-
-
-def synthetic_sku(desc: str, provider: str) -> str:
-    digest = hashlib.md5(desc.upper().encode("utf-8", errors="ignore")).hexdigest()[:10].upper()
-    return f"{PROVIDER_CODES.get(provider, 'UNK')}-AUTO-{digest}"
-
-
-def infer_sku_from_description(desc: str, provider: str) -> Tuple[str, str]:
-    text = safe_text(desc).upper()
-    # Common manufacturer/model/MPN patterns. Avoid obvious capacity/spec tokens.
-    tokens = re.findall(r"\b[A-Z0-9][A-Z0-9#./_-]{4,30}\b", text)
-    bad = re.compile(r"^(?:\d+(?:GB|TB|HZ|W)|WIN(?:DOWS)?11|DDR\d|LPDDR\d|RTX|WUXGA|FHD|OLED|IPS)$")
-    candidates = []
-    for t in tokens:
-        t = t.strip(".,;:()[]{}")
-        if bad.match(t):
-            continue
-        if not re.search(r"[A-Z]", t) or not re.search(r"\d", t):
-            continue
-        # score model-like tokens higher than specs
-        score = 0
-        score += 3 if "-" in t or "/" in t or "#" in t else 0
-        score += min(len(t), 20) / 20
-        if re.search(r"\d{3,}", t): score += 1
-        if any(x in t for x in ["GB", "TB", "HZ", "GHZ", "MHZ"]): score -= 3
-        candidates.append((score, t))
-    if candidates:
-        candidates.sort(reverse=True)
-        return candidates[0][1], "INFERRED"
-    return synthetic_sku(text, provider), "SYNTHETIC"
-
-
-def first_col(df: pd.DataFrame, aliases: List[str]) -> Optional[str]:
-    normalized = {c: _norm_col(c) for c in df.columns}
-    aliases_n = [_norm_col(a) for a in aliases]
-    # exact first
-    for c, n in normalized.items():
-        if n in aliases_n:
-            return c
-    # then safe substring
-    for c, n in normalized.items():
-        if any(a in n for a in aliases_n if len(a) >= 4):
-            return c
+        c=None
+    if c is not None:
+        for rule in load_margin_rules():
+            rcat=safe_text(rule.get("Categoria")).upper().strip()
+            try:
+                mn=float(rule.get("Costo_Min",0) or 0)
+                mx=float(rule.get("Costo_Max",999999) or 999999)
+                pct=float(rule.get("Margen_Pct"))
+            except Exception:
+                continue
+            category_match=(rcat in {"*","TODAS","TODOS","ALL"}) or (rcat==cat) or (rcat and (rcat in cat or cat in rcat))
+            if category_match and mn <= c <= mx:
+                return pct
+    # Business baseline already defined for computers.
+    if "LAPTOP" in cat or "NOTEBOOK" in cat or "DESKTOP" in cat:
+        return 2.0
     return None
 
 
-def header_row(raw: pd.DataFrame, require_price=True, max_rows=25) -> Optional[int]:
-    sku_words = ["SKU", "MODEL", "MPN", "PART NUMBER", "PART #", "ITEM", "ITEM NUMBER", "ITEM CODE"]
-    price_words = ["PRICE", "COST", "FOB", "CASH", "EXW"]
-    desc_words = ["DESCRIPTION", "PRODUCT", "ITEM NAME", "ITEM DESCRIPTION", "PRODUCTS"]
-    best = None
-    for i in range(min(max_rows, len(raw))):
-        vals = [_norm_col(v) for v in raw.iloc[i].tolist() if pd.notna(v)]
-        has_sku = any(any(k in v for k in sku_words) for v in vals)
-        has_price = any(any(k in v for k in price_words) for v in vals)
-        has_desc = any(any(k in v for k in desc_words) for v in vals)
-        score = int(has_sku) * 3 + int(has_price) * 3 + int(has_desc) * 2
-        if best is None or score > best[0]: best = (score, i, has_price)
-    if not best or best[0] < 5 or (require_price and not best[2]):
-        return None
-    return best[1]
-
-
-def excel_file(uploaded):
-    uploaded.seek(0)
-    data = uploaded.read()
-    uploaded.seek(0)
-    name = uploaded.name.lower()
-    if name.endswith(".xls"):
-        try:
-            import xlrd  # noqa: F401
-        except ImportError as e:
-            raise RuntimeError(
-                "Para leer archivos .xls (por ejemplo Cellutech) instala xlrd. "
-                "Agrega 'xlrd==2.0.1' a requirements.txt."
-            ) from e
-    return pd.ExcelFile(io.BytesIO(data))
-
-
-def empty_frame() -> pd.DataFrame:
-    return pd.DataFrame(columns=BASE_COLUMNS)
-
-
-def make_row(provider, sku, desc, price, stock=None, stock_miami=None, stock_ny=None,
-             transit=None, moq=None, eta="", location="", condition="", sku_source="FILE") -> Optional[dict]:
-    p = clean_price(price)
-    d = safe_text(desc)
-    sku = safe_text(sku).upper()
-    if not sku:
-        sku, sku_source = infer_sku_from_description(d, provider)
-    if not d or p is None:
-        return None
-    return {
-        "Proveedor": provider,
-        "SKU": sku,
-        "SKU_Fuente": sku_source,
-        "Descripcion": d,
-        "Condicion": safe_text(condition),
-        "Precio": p,
-        "Stock": clean_qty(stock),
-        "Stock_Miami": clean_qty(stock_miami),
-        "Stock_NY": clean_qty(stock_ny),
-        "En_Transito": clean_qty(transit),
-        "MOQ": clean_qty(moq),
-        "ETA": safe_text(eta),
-        "Ubicacion": safe_text(location),
-    }
-
-
-def finalize(rows: List[dict]) -> pd.DataFrame:
-    if not rows:
-        return empty_frame()
-
-    # Build every expected column first so Pandas does not infer an incompatible
-    # dtype and later reject assignments (stricter in newer Pandas versions).
-    df = pd.DataFrame(rows).reindex(columns=BASE_COLUMNS)
-
-    numeric_cols = [
-        "Precio", "Stock", "Stock_Miami", "Stock_NY", "En_Transito", "MOQ"
-    ]
-    for c in numeric_cols:
-        df[c] = pd.to_numeric(df[c], errors="coerce").astype("Float64")
-
-    text_cols = [
-        "Proveedor", "SKU", "SKU_Fuente", "Descripcion", "Condicion", "ETA", "Ubicacion"
-    ]
-    for c in text_cols:
-        df[c] = df[c].where(df[c].notna(), "").astype("string")
-
-    # Prefer explicit Stock; otherwise use Miami + NY where available.
-    has_city = df[["Stock_Miami", "Stock_NY"]].notna().any(axis=1)
-    needs_stock = df["Stock"].isna() & has_city
-    if bool(needs_stock.any()):
-        summed = (
-            df[["Stock_Miami", "Stock_NY"]]
-            .fillna(0)
-            .sum(axis=1)
-            .astype("Float64")
+def render_margin_config(prefix="margin_cfg"):
+    import json
+    st.markdown("#### Reglas de margen")
+    st.caption("Define márgenes automáticos por categoría y rango de costo. El precio o margen manual de un producto siempre tiene prioridad.")
+    rules=load_margin_rules()
+    normalized_rules=[]
+    seen_rule_keys=set()
+    for r in rules:
+        rr=dict(r)
+        rr["Categoria"]=normalize_category_name(rr.get("Categoria"))
+        key=(
+            rr["Categoria"],
+            float(rr.get("Costo_Min",0) or 0),
+            float(rr.get("Costo_Max",999999) or 999999),
         )
-        df.loc[needs_stock, "Stock"] = summed.loc[needs_stock].to_numpy()
+        if key in seen_rule_keys:
+            # Prefer the first configured rule and drop alias duplicates.
+            continue
+        seen_rule_keys.add(key)
+        normalized_rules.append(rr)
+    rules=normalized_rules
 
-    df["SKU"] = df["SKU"].str.strip().str.upper()
-
-    # Global commercial filters:
-    # 1) BONDED inventory must never reach the comparator.
-    # 2) Only products with confirmed stock > 0 are shown. Unknown/missing stock is excluded.
-    bonded_text = (
-        df["SKU"].astype("string").fillna("") + " " +
-        df["Descripcion"].astype("string").fillna("") + " " +
-        df["Condicion"].astype("string").fillna("")
-    ).str.upper()
-    df = df[~bonded_text.str.contains("BONDED", regex=False, na=False)]
-    df = df[(df["SKU"] != "") & df["Precio"].notna() & df["Stock"].notna() & (df["Stock"] > 0)]
-    return df[BASE_COLUMNS].drop_duplicates().reset_index(drop=True)
-
-
-# ============================================================
-# CATEGORY / SPEC EXTRACTION
-# ============================================================
-def clasificar_categoria(desc, sku, condition=""):
-    text = f"{safe_text(desc)} {safe_text(sku)} {safe_text(condition)}".upper()
-
-    # Refurbished has absolute priority regardless of product type.
-    refurb_keys = [
-        "REFURBISHED", "REFURB", "RENEWED", "RECERTIFIED",
-        "RECONDITIONED", "RECONDITION", "CERTIFIED REFURBISHED",
+    canonical_categories=[
+        "LAPTOPS","DESKTOPS","MONITORS","GAMING","MULTIMEDIA",
+        "STORAGE","NETWORKING","ACCESSORIES & OTHERS","REFURBISHED"
     ]
-    if any(k in text for k in refurb_keys):
-        return "♻️ REFURBISHED"
 
-    gaming_keys = [
-        "PLAYSTATION", "PS5", "PS4", "XBOX", "NINTENDO", "SWITCH", "JOY-CON", "JOYCON",
-        "ROG ALLY", "LEGION GO", "STEAM DECK", "META QUEST", "OCULUS",
-        "ALIENWARE", "PREDATOR", "OMEN", "VICTUS", "ZEPHYRUS", "CYBORG", "RAIDER",
-        "KATANA", "STRIX", "SCAR", "ROG ", " TUF ", "NITRO", "LOQ",
-        "GAMING LAPTOP", "GAMING DESKTOP", "GAMING PC", "GAMING HEADSET",
-        "GAMING MOUSE", "GAMING KEYBOARD", "LOGITECH G", "HYPERX", "ASTRO",
+    # Show every commercial category in the editor, even when no margin
+    # has been configured yet. Existing saved rules are preserved.
+    present={safe_text(r.get("Categoria")).upper().strip() for r in rules}
+    for cat in canonical_categories:
+        if cat not in present:
+            rules.append({
+                "Categoria":cat,
+                "Costo_Min":0.0,
+                "Costo_Max":999999.0,
+                "Margen_Pct":None,
+            })
+    draft=globals().get("winners")
+    coverage_rows=[]
+    for cat in canonical_categories:
+        configured=any(
+            (
+                (safe_text(r.get("Categoria")).upper().strip() in {"*","TODAS","TODOS","ALL"}) or
+                (normalize_category_name(r.get("Categoria"))==cat)
+            )
+            and pd.notna(r.get("Margen_Pct"))
+            for r in rules
+        )
+        total=0
+        missing=0
+        if isinstance(draft,pd.DataFrame) and not draft.empty and "Categoria" in draft.columns:
+            part=draft[draft["Categoria"].astype(str).str.upper()==cat]
+            total=len(part)
+            if "Precio_Publicado" in part.columns:
+                missing=int(part["Precio_Publicado"].isna().sum())
+        coverage_rows.append({
+            "Categoría":cat,
+            "Productos":total,
+            "Regla de margen":"Sí" if configured else "Pendiente",
+            "Sin precio":missing,
+        })
+    st.markdown("##### Cobertura actual")
+    st.dataframe(pd.DataFrame(coverage_rows),use_container_width=True,hide_index=True)
+    st.caption("Las categorías en Pendiente no recibirán precio automático hasta que definas una regla. Los precios manuales siguen teniendo prioridad.")
+
+    cols=["Categoria","Costo_Min","Costo_Max","Margen_Pct"]
+    df=pd.DataFrame(rules)
+    for col in cols:
+        if col not in df.columns:
+            df[col]=None
+    edited=st.data_editor(
+        df[cols],
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        key=f"{prefix}_editor",
+        column_config={
+            "Categoria":st.column_config.TextColumn("Categoría"),
+            "Costo_Min":st.column_config.NumberColumn("Costo mínimo",min_value=0.0,format="$%.2f"),
+            "Costo_Max":st.column_config.NumberColumn("Costo máximo",min_value=0.0,format="$%.2f"),
+            "Margen_Pct":st.column_config.NumberColumn("Margen %",min_value=0.0,max_value=100.0,format="%.2f%%"),
+        },
+    )
+    if st.button("Guardar reglas de margen",type="primary",key=f"{prefix}_save"):
+        clean=[]
+        errors=[]
+        for idx,row in edited.iterrows():
+            cat=safe_text(row.get("Categoria")).strip()
+            if not cat:
+                continue
+            cat=normalize_category_name(cat)
+            try:
+                mn=float(row.get("Costo_Min") if pd.notna(row.get("Costo_Min")) else 0)
+                mx=float(row.get("Costo_Max") if pd.notna(row.get("Costo_Max")) else 999999)
+                pct_raw=row.get("Margen_Pct")
+                if pd.isna(pct_raw):
+                    # Blank margin means category intentionally left pending.
+                    continue
+                pct=float(pct_raw)
+            except Exception:
+                errors.append(f"Fila {idx+1}: valores incompletos.")
+                continue
+            if mn < 0 or mx < mn or pct < 0:
+                errors.append(f"Fila {idx+1}: revisa rango y margen.")
+                continue
+            clean.append({"Categoria":cat,"Costo_Min":mn,"Costo_Max":mx,"Margen_Pct":pct})
+        if errors:
+            st.error(" ".join(errors))
+        elif not clean:
+            st.error("Debes conservar al menos una regla de margen.")
+        else:
+            set_setting("margin_rules_json",json.dumps(clean,ensure_ascii=False))
+            st.success("Reglas de margen guardadas. El borrador se recalculará con los nuevos márgenes.")
+            st.rerun()
+'''
+if _margin_func_old not in source:
+    raise RuntimeError("Margin function target not found.")
+source=source.replace(_margin_func_old,_margin_func_new)
+
+_cfg_empty_old='''    else:
+        st.subheader("Configuración")
+        st.markdown("#### Contraseña de clientes")
+'''
+_cfg_empty_new='''    else:
+        st.subheader("Configuración")
+        render_margin_config("cfg_empty_margin")
+        st.divider()
+        st.markdown("#### Contraseña de clientes")
+'''
+if _cfg_empty_old not in source:
+    raise RuntimeError("Empty-state configuration target not found.")
+source=source.replace(_cfg_empty_old,_cfg_empty_new,1)
+
+_cfg_main_old='''if page=="Configuración":
+    st.subheader("Configuración")
+    st.markdown("#### Contraseña de clientes")
+'''
+_cfg_main_new='''if page=="Configuración":
+    st.subheader("Configuración")
+    render_margin_config("cfg_main_margin")
+    st.divider()
+    st.markdown("#### Contraseña de clientes")
+'''
+if _cfg_main_old not in source:
+    raise RuntimeError("Main configuration target not found.")
+source=source.replace(_cfg_main_old,_cfg_main_new,1)
+
+
+# Category classification priority fixes for obvious non-PC products.
+_category_old = '''    desktop_keys = [
+'''
+_category_new = '''    # High-priority categories that can contain ambiguous words such as
+    # "all-in-one" but are not desktop computers.
+    printer_keys = [
+        "PRINTER", "INKJET", "LASERJET", "LASER PRINTER", "MULTIFUNCTION PRINTER",
+        "PHOTO PRINTER", "LABEL PRINTER", "OFFICEJET", "DESKJET", "ECOTANK",
+        "MAXIFY", "PIXMA", "IMAGECLASS", "BROTHER MFC", "BROTHER HL",
     ]
-    if any(k in text for k in gaming_keys):
-        return "🎮 Gaming"
+    if any(k in text for k in printer_keys):
+        return "🔌 Accessories & Others"
+
+    networking_keys = [
+        "STARLINK", "ROUTER", "MESH WIFI", "MESH WI-FI", "WI-FI SYSTEM",
+        "WIFI SYSTEM", "ACCESS POINT", "WIRELESS ACCESS POINT", "ETHERNET SWITCH",
+        "NETWORK SWITCH", "GIGABIT SWITCH", "MODEM", "FIREWALL", "GATEWAY",
+        "Ubiquiti", "UNIFI", "TP-LINK OMADA",
+    ]
+    if any(k.upper() in text for k in networking_keys):
+        return "🌐 Networking"
 
     desktop_keys = [
-        "DESKTOP", "ALL IN ONE", "ALL-IN-ONE", " AIO ", "THINKCENTRE", "THINKCENTER",
-        "OPTIPLEX", "PRODESK", "ELITEDESK", "THINKSTATION", "MINI PC", "MINI DESKTOP",
-        "MICRO PC", "SFF", "SMALL FORM FACTOR", "TOWER", "WORKSTATION", "SERVER", "NUC",
-        "PRECISION TOWER", "PRECISION WORKSTATION", "HP Z2", "HP Z4", "HP Z6", "HP Z8",
+'''
+if _category_old not in source:
+    raise RuntimeError("Category desktop target not found.")
+source=source.replace(_category_old,_category_new,1)
+
+
+# Broaden product-family classification and canonicalize Motech categories.
+_classify_multimedia_old = '''        "WIRELESS EARBUD", "TRUE WIRELESS", "TWS", "ECHO DOT", "ECHO SHOW", "ALEXA",
+'''
+_classify_multimedia_new = '''        "WIRELESS EARBUD", "TRUE WIRELESS", "TWS", "AMAZON ECHO", " ECHO ", "ECHO DOT", "ECHO SHOW", "ALEXA",
+'''
+if _classify_multimedia_old not in source:
+    raise RuntimeError("Multimedia classifier target not found.")
+source=source.replace(_classify_multimedia_old,_classify_multimedia_new,1)
+
+_gaming_old = '''        "PLAYSTATION", "PS5", "PS4", "XBOX", "NINTENDO", "SWITCH", "JOY-CON", "JOYCON",
+'''
+_gaming_new = '''        "PLAYSTATION", "PS5", "PS4", "XBOX", "NINTENDO", "SWITCH", "JOY-CON", "JOYCON",
+        "META - QUEST", "META QUEST", "QUEST 3S", "QUEST 3 ", "QUEST 2 ",
+'''
+if _gaming_old not in source:
+    raise RuntimeError("Gaming classifier target not found.")
+source=source.replace(_gaming_old,_gaming_new,1)
+
+_desktop_old = '''        "PRECISION TOWER", "PRECISION WORKSTATION", "HP Z2", "HP Z4", "HP Z6", "HP Z8",
+'''
+_desktop_new = '''        "PRECISION TOWER", "PRECISION WORKSTATION", "HP Z2", "HP Z4", "HP Z6", "HP Z8",
+        "IMAC", "MAC MINI", "MAC STUDIO",
+'''
+if _desktop_old not in source:
+    raise RuntimeError("Desktop classifier target not found.")
+source=source.replace(_desktop_old,_desktop_new,1)
+
+_cpu_old = '''    has_cpu = bool(re.search(r"\\b(?:CORE\\s+(?:ULTRA\\s+)?[3579]|I[3579][-\\s]|RYZEN(?:\\s+AI)?\\s+[3579]|SNAPDRAGON\\s+X|CELERON|PENTIUM)\\b", text))
+'''
+_cpu_new = '''    has_cpu = bool(re.search(r"\\b(?:CORE\\s+(?:ULTRA\\s+)?[3579]|I[3579][-\\s]|RYZEN(?:\\s+AI)?\\s+[3579]|SNAPDRAGON\\s+X|CELERON|PENTIUM|INTEL\\s+N\\d{3,4}|N\\d{3,4})\\b", text))
+'''
+if _cpu_old not in source:
+    raise RuntimeError("Laptop CPU fallback target not found.")
+source=source.replace(_cpu_old,_cpu_new,1)
+
+_accessory_old = '''        "USB HUB", "HUB ", "BACKPACK", "SLEEVE",
+'''
+_accessory_new = '''        "USB HUB", "HUB ", "BACKPACK", "SLEEVE", "SMARTWATCH", "SMART WATCH",
+        "APPLE WATCH", "GALAXY WATCH", "AIR TAG", "AIRTAG",
+'''
+if _accessory_old not in source:
+    raise RuntimeError("Accessory classifier target not found.")
+source=source.replace(_accessory_old,_accessory_new,1)
+
+_norm_old = '''def normalize_category_name(v):
+    s=re.sub(r"^[^A-Za-z0-9]+","",safe_text(v)).strip()
+    return s.upper() if s else "OTHER"
+'''
+_norm_new = '''def normalize_category_name(v):
+    s=re.sub(r"^[^A-Za-z0-9]+","",safe_text(v)).strip().upper()
+    aliases={
+        "LAPTOPS":"LAPTOPS","LAPTOP":"LAPTOPS","NOTEBOOKS":"LAPTOPS",
+        "DESKTOPS & PC":"DESKTOPS","DESKTOPS":"DESKTOPS","DESKTOP":"DESKTOPS",
+        "MONITORES":"MONITORS","MONITORS":"MONITORS",
+        "GAMING":"GAMING",
+        "MULTIMEDIA":"MULTIMEDIA",
+        "STORAGE":"STORAGE",
+        "NETWORKING":"NETWORKING",
+        "ACCESORIOS":"ACCESSORIES & OTHERS","ACCESSORIES":"ACCESSORIES & OTHERS",
+        "ACCESSORIES & OTHERS":"ACCESSORIES & OTHERS",
+        "OTROS / VARIOS":"ACCESSORIES & OTHERS","OTHER":"ACCESSORIES & OTHERS",
+        "REFURBISHED":"REFURBISHED",
+        "TABLETS":"ACCESSORIES & OTHERS",
+    }
+    return aliases.get(s,s if s else "ACCESSORIES & OTHERS")
+'''
+if _norm_old not in source:
+    raise RuntimeError("Category normalization target not found.")
+source=source.replace(_norm_old,_norm_new,1)
+
+
+# Classifier V2: structured product-family classification used by the daily catalog.
+_v2_anchor = '''    df["Categoria"]=df.apply(lambda r:normalize_category_name(clasificar_categoria(r["Descripcion"],r["SKU"],r.get("Condicion",""))),axis=1)
+'''
+_v2_code = r'''
+
+    def clasificar_categoria_v2(descripcion, sku="", condicion=""):
+        text=(" ".join([safe_text(descripcion),safe_text(sku),safe_text(condicion)])).upper()
+        text=re.sub(r"[\-_/,;:()\[\]]+"," ",text)
+        text=re.sub(r"\s+"," ",text).strip()
+
+        # 1) Commercial condition has priority.
+        refurb_terms=[
+            "REFURBISHED","REFURB","RENEWED","RECERTIFIED","RECONDITIONED",
+            "OFF LEASE","OFF-LEASE","CERTIFIED REFURBISHED"
+        ]
+        if any(t in text for t in refurb_terms):
+            return "REFURBISHED"
+
+        # 2) Gaming families.
+        gaming_terms=[
+            "PLAYSTATION"," PS5 "," PS4 ","XBOX","NINTENDO","SWITCH 2","NINTENDO SWITCH",
+            "JOY CON","JOYCON","META QUEST","QUEST 3S","QUEST 3 ","QUEST 2 ",
+            "STEAM DECK","ROG ALLY","LEGION GO",
+            "GAMING LAPTOP","GAMING DESKTOP","GAMING PC","GAMING HEADSET",
+            "GAMING MOUSE","GAMING KEYBOARD","ALIENWARE","PREDATOR","VICTUS",
+            "ZEPHYRUS","CYBORG","RAIDER","KATANA","STRIX","SCAR","ROG "," TUF ","NITRO"," LOQ "
+        ]
+        if any(t in f" {text} " for t in gaming_terms):
+            return "GAMING"
+
+        # 3) Printers/peripherals before desktop, because many printers say All-in-One.
+        printer_terms=[
+            "PRINTER","INKJET","LASERJET","LASER PRINTER","MULTIFUNCTION","OFFICEJET",
+            "DESKJET","ECOTANK","MAXIFY","PIXMA","IMAGECLASS","BROTHER MFC","BROTHER HL",
+            "LABEL PRINTER","PHOTO PRINTER","SCANNER"
+        ]
+        if any(t in text for t in printer_terms):
+            return "ACCESSORIES & OTHERS"
+
+        # 4) Networking.
+        networking_terms=[
+            "STARLINK","ROUTER","MESH WIFI","MESH WI FI","WIFI SYSTEM","WI FI SYSTEM",
+            "ACCESS POINT","ETHERNET SWITCH","NETWORK SWITCH","GIGABIT SWITCH",
+            "MODEM","FIREWALL","GATEWAY","UNIFI","UBIQUITI","OMADA",
+            "NETWORK ADAPTER","NETWORKING"
+        ]
+        if any(t in text for t in networking_terms):
+            return "NETWORKING"
+
+        # 5) Monitors/displays. Avoid laptops by requiring monitor-family vocabulary.
+        monitor_terms=[
+            "MONITOR","GAMING MONITOR","PORTABLE MONITOR","CURVED MONITOR",
+            "LCD MONITOR","LED MONITOR","OLED MONITOR","DISPLAY MONITOR"
+        ]
+        if any(t in text for t in monitor_terms):
+            return "MONITORS"
+
+        # 6) Storage.
+        storage_terms=[
+            " SSD ","SOLID STATE DRIVE"," NVME "," M.2 ","HARD DRIVE","HDD",
+            "EXTERNAL DRIVE","EXTERNAL SSD","EXTERNAL HDD","USB FLASH","FLASH DRIVE",
+            "MICROSD","MICRO SD","SD CARD","MEMORY CARD","NAS DRIVE"
+        ]
+        storage_device_cue=any(t in text for t in ["EXTERNAL DRIVE","EXTERNAL SSD","EXTERNAL HDD","USB FLASH","FLASH DRIVE","MICROSD","MICRO SD","SD CARD","MEMORY CARD","NAS DRIVE","HARD DRIVE","SOLID STATE DRIVE","PORTABLE SSD","PORTABLE HDD"])
+        computer_spec_cue=bool(re.search(r"\b(?:RAM|MEMORY)\b",text)) and bool(re.search(r"\b(?:INTEL|AMD|ATHLON|RYZEN|CORE|CELERON|PENTIUM|SNAPDRAGON)\b",text))
+        if any(t in f" {text} " for t in storage_terms) and (storage_device_cue or not computer_spec_cue):
+            return "STORAGE"
+
+        # 7) Multimedia / audio / streaming / smart speakers.
+        multimedia_terms=[
+            "AMAZON ECHO","ECHO DOT","ECHO SHOW","ALEXA","FIRE TV","FIRE STICK",
+            "CHROMECAST","ROKU","APPLE TV","STREAMING DEVICE","MEDIA PLAYER","SMART TV BOX",
+            "SPEAKER","SOUNDBAR","SOUND BAR","HEADPHONE","HEADPHONES","EARBUD","EARBUDS",
+            "AIRPODS","BEATS","TRUE WIRELESS","WIRELESS EARBUD","TWS",
+            "HOME POD","HOMEPOD","BLUETOOTH SPEAKER","MICROPHONE","PROJECTOR",
+        "IPAD","GALAXY TAB","ANDROID TABLET","TABLET","FIRE HD","FIRE TABLET"
+        ]
+        if any(t in text for t in multimedia_terms):
+            return "MULTIMEDIA"
+
+        # 8) Desktop / mini PC / workstation / Apple desktop families.
+        desktop_terms=[
+            "DESKTOP","DESKTOP PC","MINI PC","MINI COMPUTER","MINI DESKTOP","MICRO PC",
+            "SMALL FORM FACTOR"," SFF ","TOWER PC","WORKSTATION","THINKCENTRE","THINKCENTER",
+            "OPTIPLEX","PRODESK","ELITEDESK","THINKSTATION","PRECISION TOWER",
+            "PRECISION WORKSTATION","HP Z2","HP Z4","HP Z6","HP Z8","NUC",
+            "IMAC","MAC MINI","MAC STUDIO"
+        ]
+        if any(t in f" {text} " for t in desktop_terms):
+            return "DESKTOPS"
+
+        # Generic all-in-one computer only after printers have been excluded.
+        if ("ALL IN ONE" in text or "ALL IN ONE PC" in text or " AIO " in f" {text} ") and \
+           any(t in text for t in ["INTEL","AMD","RYZEN","CORE","MEMORY","RAM","SSD","WINDOWS","MAC"]):
+            return "DESKTOPS"
+
+        # 9) Laptop families and chassis words.
+        laptop_terms=[
+            "LAPTOP","NOTEBOOK","CHROMEBOOK","MACBOOK","ULTRABOOK",
+            "THINKPAD","IDEAPAD","LATITUDE","INSPIRON","VOSTRO","PROBOOK","ELITEBOOK",
+            "ZBOOK","PAVILION","ENVY","SPECTRE","OMNIBOOK","VIVOBOOK","ZENBOOK",
+            "EXPERTBOOK","ASPIRE","SWIFT","TRAVELMATE","LG GRAM","SURFACE LAPTOP",
+            "DELL PRO ","YOGA","SURFACE PRO","L210MA","L510MA","14-EM","14-EP","14-DQ","14-CF","14S-","15-FD","15-FC","15-DY","15S-","255 G","250 G"
+        ]
+        if any(t in text for t in laptop_terms):
+            return "LAPTOPS"
+
+        # 10) Laptop fallback from specs: mobile CPU + RAM + laptop-size screen.
+        cpu_mobile=bool(re.search(
+            r"\b(?:INTEL\s+)?(?:N\d{2,4}[A-Z]{0,3}|CELERON|PENTIUM|CORE\s+(?:ULTRA\s+)?[3579]|I[3579]\s*\-?\s*\d{3,5}[A-Z]{0,2}|"
+            r"RYZEN(?:\s+AI)?\s+[3579]\s*\d{3,5}[A-Z]{0,2}|ATHLON(?:\s+(?:SILVER|GOLD))?\s*\d{3,5}[A-Z]{0,2}|AMD\s+(?:A[469]|E[12])[-\s]?\d{3,4}|SNAPDRAGON\s+X)\b", text))
+        ram=bool(re.search(r"\b(?:4|8|12|16|24|32|48|64|96|128)\s*GB\b",text))
+        laptop_screen=bool(re.search(r"\b(?:10|11|12|13|14|15|16|17)(?:\.\d)?\s*(?:INCH|INCHES|IN|\"|″)\b",text))
+        if cpu_mobile and ram and laptop_screen:
+            return "LAPTOPS"
+
+        # 11) Generic desktop fallback: CPU + RAM + storage, but no laptop-size display.
+        storage_spec=bool(re.search(r"\b(?:128|256|512|1024|1TB|2TB|4TB)\s*(?:GB|TB)?\s*(?:SSD|NVME|HDD)?\b",text))
+        if cpu_mobile and ram and storage_spec and not laptop_screen:
+            return "DESKTOPS"
+
+        # 12) Wearables/tablets/general accessories.
+        accessory_terms=[
+            "APPLE WATCH","GALAXY WATCH","SMARTWATCH","SMART WATCH","AIRTAG","AIR TAG",
+            "MOUSE","KEYBOARD","CABLE",
+            "STYLUS","PENCIL","CASE","COVER","DOCK","DOCKING","ADAPTER","ADAPTOR",
+            "CHARGER","POWER SUPPLY","WEBCAM","USB HUB","BACKPACK","SLEEVE",
+            "REMOTE CONTROL","GAME CONTROLLER"
+        ]
+        if any(t in text for t in accessory_terms):
+            return "ACCESSORIES & OTHERS"
+
+        return "ACCESSORIES & OTHERS"
+
+    df["Categoria"]=df.apply(lambda r:normalize_category_name(clasificar_categoria_v2(r["Descripcion"],r["SKU"],r.get("Condicion",""))),axis=1)
+'''
+if _v2_anchor not in source:
+    raise RuntimeError("Classifier V2 insertion target not found.")
+source=source.replace(_v2_anchor,_v2_code,1)
+
+
+# Approved margin matrix + per-product manual cost override.
+_margin_matrix_old = '''    return [
+        {"Categoria":"LAPTOPS","Costo_Min":0.0,"Costo_Max":999999.0,"Margen_Pct":2.0},
+        {"Categoria":"DESKTOPS & PC","Costo_Min":0.0,"Costo_Max":999999.0,"Margen_Pct":2.0},
     ]
-    if any(k in text for k in desktop_keys):
-        return "🖥️ Desktops & PC"
-
-    laptop_keys = [
-        "MACBOOK", "LAPTOP", "NOTEBOOK", "CHROMEBOOK", "ASPIRE", "VIVOBOOK", "ZENBOOK",
-        "EXPERTBOOK", "IDEAPAD", "THINKPAD", "LATITUDE", "INSPIRON", "VOSTRO",
-        "PROBOOK", "ELITEBOOK", "ZBOOK", "PAVILION", "ENVY", "SPECTRE", "OMNIBOOK",
-        "SURFACE LAPTOP", "LG GRAM", "YOGA", "SWIFT", "TRAVELMATE", "DELL PRO ",
+'''
+_margin_matrix_new = '''    return [
+        {"Categoria":"LAPTOPS","Costo_Min":0.0,"Costo_Max":999999.0,"Margen_Pct":2.0},
+        {"Categoria":"DESKTOPS","Costo_Min":0.0,"Costo_Max":999999.0,"Margen_Pct":2.0},
+        {"Categoria":"MONITORS","Costo_Min":0.0,"Costo_Max":100.0,"Margen_Pct":10.0},
+        {"Categoria":"MONITORS","Costo_Min":100.01,"Costo_Max":300.0,"Margen_Pct":7.0},
+        {"Categoria":"MONITORS","Costo_Min":300.01,"Costo_Max":999999.0,"Margen_Pct":6.0},
+        {"Categoria":"GAMING","Costo_Min":0.0,"Costo_Max":100.0,"Margen_Pct":10.0},
+        {"Categoria":"GAMING","Costo_Min":100.01,"Costo_Max":300.0,"Margen_Pct":7.0},
+        {"Categoria":"GAMING","Costo_Min":300.01,"Costo_Max":999999.0,"Margen_Pct":6.0},
+        {"Categoria":"MULTIMEDIA","Costo_Min":0.0,"Costo_Max":100.0,"Margen_Pct":10.0},
+        {"Categoria":"MULTIMEDIA","Costo_Min":100.01,"Costo_Max":300.0,"Margen_Pct":7.0},
+        {"Categoria":"MULTIMEDIA","Costo_Min":300.01,"Costo_Max":999999.0,"Margen_Pct":6.0},
+        {"Categoria":"STORAGE","Costo_Min":0.0,"Costo_Max":100.0,"Margen_Pct":10.0},
+        {"Categoria":"STORAGE","Costo_Min":100.01,"Costo_Max":300.0,"Margen_Pct":7.0},
+        {"Categoria":"STORAGE","Costo_Min":300.01,"Costo_Max":999999.0,"Margen_Pct":6.0},
+        {"Categoria":"NETWORKING","Costo_Min":0.0,"Costo_Max":100.0,"Margen_Pct":10.0},
+        {"Categoria":"NETWORKING","Costo_Min":100.01,"Costo_Max":300.0,"Margen_Pct":7.0},
+        {"Categoria":"NETWORKING","Costo_Min":300.01,"Costo_Max":999999.0,"Margen_Pct":6.0},
+        {"Categoria":"ACCESSORIES & OTHERS","Costo_Min":0.0,"Costo_Max":100.0,"Margen_Pct":10.0},
+        {"Categoria":"ACCESSORIES & OTHERS","Costo_Min":100.01,"Costo_Max":300.0,"Margen_Pct":7.0},
+        {"Categoria":"ACCESSORIES & OTHERS","Costo_Min":300.01,"Costo_Max":999999.0,"Margen_Pct":6.0},
+        {"Categoria":"REFURBISHED","Costo_Min":0.0,"Costo_Max":100.0,"Margen_Pct":10.0},
+        {"Categoria":"REFURBISHED","Costo_Min":100.01,"Costo_Max":300.0,"Margen_Pct":7.0},
+        {"Categoria":"REFURBISHED","Costo_Min":300.01,"Costo_Max":999999.0,"Margen_Pct":6.0},
     ]
-    if any(k in text for k in laptop_keys):
-        return "💻 Laptops"
+'''
+if _margin_matrix_old not in source:
+    raise RuntimeError("Margin default matrix target not found.")
+source=source.replace(_margin_matrix_old,_margin_matrix_new,1)
 
-    # Multimedia is intentionally separate from generic accessories.
-    multimedia_keys = [
-        "SPEAKER", "SPEAKERS", "BLUETOOTH SPEAKER", "SOUNDBAR", "SOUND BAR",
-        "HEADPHONE", "HEADPHONES", "EARBUD", "EARBUDS", "AIRPODS", "BEATS",
-        "WIRELESS EARBUD", "TRUE WIRELESS", "TWS", "ECHO DOT", "ECHO SHOW", "ALEXA",
-        "FIRE TV", "FIRE STICK", "TV STICK", "CHROMECAST", "ROKU", "APPLE TV",
-        "STREAMING DEVICE", "MEDIA PLAYER", "SMART TV BOX",
-    ]
-    if any(k in text for k in multimedia_keys):
-        return "🎵 Multimedia"
-
-    if any(k in text for k in ["IPAD", "TABLET", " TAB ", "GALAXY TAB", "SURFACE PRO"]):
-        return "📱 Tablets"
-
-    if any(k in text for k in ["MONITOR", "DISPLAY", "144HZ", "165HZ", "180HZ", "240HZ"]):
-        return "🖥️ Monitores"
-
-    accessory_keys = [
-        "MOUSE", "KEYBOARD", "CABLE", "PENCIL", "STYLUS", "CASE", "COVER", "DOCK",
-        "DOCKING", "ADAPTER", "ADAPTOR", "CHARGER", "POWER SUPPLY", "WEBCAM",
-        "USB HUB", "HUB ", "BACKPACK", "SLEEVE",
-    ]
-    if any(k in text for k in accessory_keys):
-        return "🎧 Accesorios"
-
-    # Specification fallback for laptop descriptions without a known family name.
-    has_cpu = bool(re.search(r"\b(?:CORE\s+(?:ULTRA\s+)?[3579]|I[3579][-\s]|RYZEN(?:\s+AI)?\s+[3579]|SNAPDRAGON\s+X|CELERON|PENTIUM)\b", text))
-    has_screen = bool(re.search(r'\b1[1-7](?:\.\d)?\s*(?:INCH|IN|"|″)?\b', text))
-    has_memory = bool(re.search(r"\b(?:4|8|12|16|24|32|48|64)\s*GB\b", text))
-    if has_cpu and has_screen and has_memory:
-        return "💻 Laptops"
-
-    return "📦 Otros / Varios"
-
-def extraer_especificaciones(text):
-    t = str(text).upper()
-    cpu = "Otro / No especificado"
-    cpu_patterns = [
-        (r"\bCORE\s+ULTRA\s*9\b|\bULTRA\s*9\b", "Intel Core Ultra 9"),
-        (r"\bCORE\s+ULTRA\s*7\b|\bULTRA\s*7\b", "Intel Core Ultra 7"),
-        (r"\bCORE\s+ULTRA\s*5\b|\bULTRA\s*5\b", "Intel Core Ultra 5"),
-        (r"\bI9[-\s]|\bCORE\s*I9\b", "Intel Core i9"),
-        (r"\bI7[-\s]|\bCORE\s*I7\b", "Intel Core i7"),
-        (r"\bI5[-\s]|\bCORE\s*I5\b", "Intel Core i5"),
-        (r"\bI3[-\s]|\bCORE\s*I3\b", "Intel Core i3"),
-        (r"\bRYZEN\s*(?:AI\s*)?9\b|\bR9[-\s]", "AMD Ryzen 9"),
-        (r"\bRYZEN\s*(?:AI\s*)?7\b|\bR7[-\s]", "AMD Ryzen 7"),
-        (r"\bRYZEN\s*(?:AI\s*)?5\b|\bR5[-\s]", "AMD Ryzen 5"),
-        (r"\bRYZEN\s*(?:AI\s*)?3\b|\bR3[-\s]", "AMD Ryzen 3"),
-        (r"\bAPPLE\s*M5\b|\bM5 CHIP\b", "Apple M5"),
-        (r"\bAPPLE\s*M4\b|\bM4 CHIP\b", "Apple M4"),
-        (r"\bAPPLE\s*M3\b|\bM3 CHIP\b", "Apple M3"),
-        (r"\bAPPLE\s*M2\b|\bM2 CHIP\b", "Apple M2"),
-        (r"\bAPPLE\s*M1\b|\bM1 CHIP\b", "Apple M1"),
-    ]
-    for pat, label in cpu_patterns:
-        if re.search(pat, t): cpu = label; break
-
-    ram = "Otro / No especificado"
-    for n in [64, 48, 32, 24, 16, 12, 8, 4]:
-        if re.search(rf"\b{n}\s*GB\b", t): ram = f"{n} GB"; break
-
-    storage = "Otro / No especificado"
-    if re.search(r"\b2\s*TB\b|\b2000\s*GB\b", t): storage = "2 TB SSD"
-    elif re.search(r"\b1\s*TB\b|\b1000\s*GB\b|\b1024\s*GB\b", t): storage = "1 TB SSD"
-    elif re.search(r"\b512\s*GB\b", t): storage = "512 GB SSD"
-    elif re.search(r"\b256\s*GB\b", t): storage = "256 GB SSD"
-    elif re.search(r"\b128\s*GB\b", t): storage = "128 GB"
-
-    screen = "Otro / No especificado"
-    m = re.search(r"\b(1[0-9]|2[0-9])(?:\.\d)?\s*(?:\"|INCH|IN)\b", t)
-    if m: screen = m.group(0).replace("INCH", '"').replace("IN", '"')
-    return pd.Series([cpu, ram, storage, screen])
-
-
-# ============================================================
-# PROVIDER DETECTION
-# ============================================================
-def detect_provider(filename: str) -> str:
-    n = os.path.splitext(filename)[0].upper()
-    if "HAIFA" in n: return "HAIFA"
-    if "ALL PLUS" in n: return "ALL PLUS"
-    if "ALLBRAND" in n: return "ALLBRANDS"
-    if "AQUA" in n and ("LATOP" in n or "LAPTOP" in n): return "AQUA LAPTOPS"
-    if "AQUA" in n: return "AQUA CONSUMER"
-    if re.search(r"\bASE\b", n): return "ASE"
-    if "CELLU" in n: return "CELLUTECH"
-    if "EMOLO" in n: return "EMOLO"
-    if "H&Z" in n or "H Z" in n: return "H&Z"
-    if "INFLUENTIAL" in n: return "INFLUENTIAL"
-    if "PRT" in n: return "PRT"
-    if "SNK" in n: return "SNK"
-    if "SUNRISE" in n or re.search(r"\bSUN\b", n): return "SUNRISE"
-    if "TECH SUPPLIER" in n: return "TECH SUPPLIER"
-    if "203_TRADING" in n or "203 TRADING" in n: return "203_TRADING"
-    if "TRADING" in n: return "UNLIMITED"
-    if "WORLDWIDE" in n: return "WORLDWIDE"
-    return re.sub(r"\(\d+\)$", "", n).strip()
-
-
-# ============================================================
-# PARSERS
-# ============================================================
-def parse_simple_table(xls, provider, sheet, hdr=None, aliases=None) -> pd.DataFrame:
-    raw = pd.read_excel(xls, sheet_name=sheet, header=None)
-    h = hdr if hdr is not None else header_row(raw)
-    if h is None: return empty_frame()
-    df = pd.read_excel(xls, sheet_name=sheet, header=h)
-    aliases = aliases or {}
-    c_sku = first_col(df, aliases.get("sku", ["SKU", "MODEL", "MPN", "PART NUMBER", "PART #", "ITEM", "ITEM NUMBER", "ITEM CODE"]))
-    c_desc = first_col(df, aliases.get("desc", ["DESCRIPTION", "PRODUCT", "PRODUCTS", "ITEM DESCRIPTION", "ITEM NAME", "PRODUCT DESCRIPTION"]))
-    c_price = first_col(df, aliases.get("price", ["PRICE", "PRICE (USD)", "COST", "FOB", "FOB $", "CASH", "EXW"]))
-    c_qty = first_col(df, aliases.get("qty", ["QTY", "QUANTITY", "STOCK", "IN STOCK", "UNITS"]))
-    c_eta = first_col(df, aliases.get("eta", ["ETA"]))
-    c_loc = first_col(df, aliases.get("location", ["LOCATION", "EXW"]))
-    c_moq = first_col(df, aliases.get("moq", ["MOQ"]))
-    if c_price is None: return empty_frame()
-    rows = []
-    for _, r in df.iterrows():
-        desc = safe_text(r[c_desc]) if c_desc else ""
-        sku = safe_text(r[c_sku]) if c_sku else ""
-        if not desc and sku: desc = sku
-        row = make_row(provider, sku, desc, r[c_price],
-                       stock=r[c_qty] if c_qty else None,
-                       moq=r[c_moq] if c_moq else None,
-                       eta=r[c_eta] if c_eta else "",
-                       location=r[c_loc] if c_loc else "")
-        if row: rows.append(row)
-    return finalize(rows)
-
-
-def parse_haifa(xls):
-    sheet = next((s for s in xls.sheet_names if s.strip().upper() == "FULL LIST"), xls.sheet_names[0])
-    return parse_simple_table(xls, "HAIFA", sheet)
-
-
-def parse_allplus(xls):
-    return parse_simple_table(xls, "ALL PLUS", xls.sheet_names[0], aliases={"sku":["MODEL"], "desc":["DESCRIPTION"], "price":["PRICE"]})
-
-
-def parse_allbrands(xls):
-    raw = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=None)
-    h = header_row(raw)
-    df = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=h)
-    c_desc, c_stock, c_price = first_col(df,["DESCRIPTION"]), first_col(df,["STOCK"]), first_col(df,["PRICE"])
-    rows=[]
-    for _,r in df.iterrows():
-        desc=safe_text(r[c_desc]) if c_desc else ""
-        sku,source=infer_sku_from_description(desc,"ALLBRANDS")
-        row=make_row("ALLBRANDS",sku,desc,r[c_price] if c_price else None,stock=r[c_stock] if c_stock else None,sku_source=source)
-        if row: rows.append(row)
-    return finalize(rows)
-
-
-def parse_aqua(xls, provider):
-    raw=pd.read_excel(xls,sheet_name="Sheet1",header=None)
-    h=header_row(raw)
-    df=pd.read_excel(xls,sheet_name="Sheet1",header=h)
-    c_sku=first_col(df,["PART NUMBER"]); c_desc=first_col(df,["DESCRIPTION"]); c_price=first_col(df,["FOB $","FOB"])
-    c_mia=first_col(df,["MIAMI"]); c_ny=first_col(df,["NEW YORK"])
-    rows=[]
-    for _,r in df.iterrows():
-        mia=clean_qty(r[c_mia]) if c_mia else None; ny=clean_qty(r[c_ny]) if c_ny else None
-        stock=(mia or 0)+(ny or 0) if (mia is not None or ny is not None) else None
-        loc=[]
-        if mia: loc.append(f"Miami {int(mia)}")
-        if ny: loc.append(f"NY {int(ny)}")
-        row=make_row(provider,r[c_sku] if c_sku else "",r[c_desc] if c_desc else "",r[c_price] if c_price else None,
-                     stock=stock,stock_miami=mia,stock_ny=ny,location=" / ".join(loc))
-        if row: rows.append(row)
-    return finalize(rows)
-
-
-def parse_ase(xls):
-    raw=pd.read_excel(xls,sheet_name=xls.sheet_names[0],header=None)
-    rows=[]
-    # ASE repeats the same header for sections. Detect data rows by price in col 3.
-    for _,r in raw.iterrows():
-        vals=r.tolist()
-        # ASE places Model/Description/Price at columns 3/4/5 and repeats headers by section.
-        sku=safe_text(vals[3] if len(vals)>3 else "")
-        desc=safe_text(vals[4] if len(vals)>4 else "")
-        price=clean_price(vals[5] if len(vals)>5 else None)
-        if not desc or price is None or sku.upper() in {"MODEL","LOC"}: continue
-        if not sku:
-            sku,source=infer_sku_from_description(desc,"ASE")
-        else:
-            source="FILE"
-        stock=vals[6] if len(vals)>6 else None
-        transit=vals[7] if len(vals)>7 else None
-        eta=vals[8] if len(vals)>8 else ""
-        row=make_row("ASE",sku,desc,price,stock=stock,transit=transit,eta=eta,sku_source=source)
-        if row: rows.append(row)
-    return finalize(rows)
-
-
-def parse_emolo(xls):
-    return parse_simple_table(xls,"EMOLO",xls.sheet_names[0],aliases={"sku":["MODEL"],"desc":["DESCRIPTION"],"qty":["QTY"],"price":["PRICE"]})
-
-
-def parse_hz(xls):
-    sheet=next((s for s in xls.sheet_names if s.strip().upper()=="ALL PRODUCTS"),xls.sheet_names[0])
-    # Model Number is the more useful cross-vendor MPN. Fall back to SKU/UPC.
-    df=pd.read_excel(xls,sheet_name=sheet,header=0)
-    rows=[]
-    for _,r in df.iterrows():
-        sku=safe_text(r.get("Model Number")) or safe_text(r.get("SKU"))
-        row=make_row("H&Z",sku,r.get("Description"),r.get("Price (USD)"),stock=r.get("Qty"),moq=r.get("MOQ"),eta=r.get("ETA"),location=r.get("EXW"))
-        if row: rows.append(row)
-    return finalize(rows)
-
-
-def parse_influential(xls):
-    df=pd.read_excel(xls,sheet_name=xls.sheet_names[0],header=0)
-    rows=[]
-    for _,r in df.iterrows():
-        sku=safe_text(r.get("MPN")) or safe_text(r.get("SKU")) or safe_text(r.get("UPC"))
-        row=make_row("INFLUENTIAL",sku,r.get("Description"),r.get("Price"),stock=r.get("Qty"))
-        if row: rows.append(row)
-    return finalize(rows)
-
-
-def parse_prt(xls):
-    return parse_simple_table(xls,"PRT",xls.sheet_names[0],hdr=0,aliases={"sku":["PART NUMBER"],"desc":["DESCRIPTION"],"qty":["QTY"],"price":["PRICE"]})
-
-
-def parse_snk(xls):
-    rows=[]
-    for sheet in xls.sheet_names:
-        su=sheet.strip().upper()
-        if "IPHONE" in su:  # layout is a matrix, not a normal SKU table; skip safely for now
-            continue
-        raw=pd.read_excel(xls,sheet_name=sheet,header=None)
-        h=header_row(raw)
-        if h is None: continue
-        df=pd.read_excel(xls,sheet_name=sheet,header=h)
-        c_sku=first_col(df,["MODEL","SKU"])
-        c_desc=first_col(df,["ALL PRODUCTS","PRODUCTS","DESCRIPTION"])
-        c_price=first_col(df,["PRICE (USD$)","EXW - NY","PRICE"])
-        c_qty=first_col(df,["UNITS","UNITS - MIAMI","QTY"])
-        c_ny=first_col(df,["UNITS - NY"])
-        c_mia=first_col(df,["UNITS - MIAMI"])
-        c_loc=first_col(df,["LOCATION"])
-        if c_price is None: continue
-        for _,r in df.iterrows():
-            desc=safe_text(r[c_desc]) if c_desc else ""
-            sku=safe_text(r[c_sku]) if c_sku else ""
-            if not sku or not desc: continue
-            mia=clean_qty(r[c_mia]) if c_mia else (clean_qty(r[c_qty]) if c_qty and "MIAMI" in su else None)
-            ny=clean_qty(r[c_ny]) if c_ny else (clean_qty(r[c_qty]) if c_qty and "NY STOCK" in su else None)
-            stock=clean_qty(r[c_qty]) if c_qty else None
-            if c_mia or c_ny: stock=(mia or 0)+(ny or 0)
-            loc=safe_text(r[c_loc]) if c_loc else sheet.strip()
-            row=make_row("SNK",sku,desc,r[c_price],stock=stock,stock_miami=mia,stock_ny=ny,location=loc)
-            if row: rows.append(row)
-    return finalize(rows)
-
-
-def parse_sunrise(xls):
-    sheet=next((s for s in xls.sheet_names if "PRICE" in s.upper()),xls.sheet_names[0])
-    raw=pd.read_excel(xls,sheet_name=sheet,header=None)
-    rows=[]
-    # Columns in this workbook: QTY, category, description, stock/transit, Cash, take-all.
-    for _,r in raw.iterrows():
-        vals=r.tolist()
-        if len(vals)<5: continue
-        qty=clean_qty(vals[0]); desc=safe_text(vals[2] if len(vals)>2 else "")
-        status=safe_text(vals[3] if len(vals)>3 else "").upper()
-        cash=clean_price(vals[4] if len(vals)>4 else None)
-        if not desc or cash is None or qty is None: continue
-        sku,source=infer_sku_from_description(desc,"SUNRISE")
-        stock=qty if "STOCK" in status else 0
-        transit=qty if "TRANSIT" in status else 0
-        row=make_row("SUNRISE",sku,desc,cash,stock=stock,transit=transit,location=status,sku_source=source)
-        if row: rows.append(row)
-    return finalize(rows)
-
-
-def parse_tech(xls):
-    # Consolidate duplicate item/location rows into one row per SKU at same price.
-    df=parse_simple_table(xls,"TECH SUPPLIER",xls.sheet_names[0],hdr=0,
-                          aliases={"sku":["ITEM NUMBER"],"desc":["ITEM DESCRIPTION"],"qty":["QUANTITY"],"price":["PRICE"],"location":["LOCATION"]})
-    if df.empty: return df
-    # Convert rows tagged in transit to En_Transito; Miami rows remain Stock.
-    transit_mask=df["Ubicacion"].astype("string").str.upper().str.contains("TRANSIT",na=False)
-    df["Stock"] = pd.to_numeric(df["Stock"], errors="coerce").astype("Float64")
-    df["En_Transito"] = pd.to_numeric(df["En_Transito"], errors="coerce").astype("Float64")
-    if bool(transit_mask.any()):
-        df.loc[transit_mask,"En_Transito"] = df.loc[transit_mask,"Stock"].to_numpy()
-        df.loc[transit_mask,"Stock"] = 0.0
-    grouped=[]
-    for (sku,price),g in df.groupby(["SKU","Precio"],dropna=False):
-        best=g.iloc[0].copy()
-        best["Stock"]=g["Stock"].fillna(0).sum()
-        best["En_Transito"]=g["En_Transito"].fillna(0).sum()
-        best["Ubicacion"]=" / ".join(sorted(set(x for x in g["Ubicacion"].astype(str) if x and x.lower()!="nan")))
-        best["Descripcion"]=max(g["Descripcion"].astype(str),key=len)
-        grouped.append(best.to_dict())
-    return finalize(grouped)
-
-
-def parse_unlimited(xls):
-    rows=[]
-    for sheet in xls.sheet_names:
-        raw=pd.read_excel(xls,sheet_name=sheet,header=None)
-        h=header_row(raw)
-        if h is None: continue
-        df=pd.read_excel(xls,sheet_name=sheet,header=h)
-        su=sheet.strip().upper()
-        # aliases vary by brand sheet
-        c_sku=first_col(df,["SKU","ITEM NUMBER","ITEMKEY","ITEM CODE","MODEL"])
-        c_desc=first_col(df,["DESCRIPTION","PRODUCTS:","PRODUCT DESCRIPTION","ITEMNAME","KEY FEATURE DESCRIPTION","HP"])
-        c_qty=first_col(df,["QUANTITY","MASTER","QTY","AVAILABILITY"])
-        c_price=first_col(df,["PROMO PRICE","PRICE","PRICE ","COST"])
-        if c_price is None: continue
-        # House of Marley has continuation rows for color variants; carry description down.
-        if c_desc is not None and "HOUSE OF MARLEY" in su:
-            df[c_desc]=df[c_desc].ffill()
-        for _,r in df.iterrows():
-            sku=safe_text(r[c_sku]) if c_sku else ""
-            desc=safe_text(r[c_desc]) if c_desc else ""
-            if not sku and desc:
-                sku,source=infer_sku_from_description(desc,"UNLIMITED")
-            else:
-                source="FILE"
-            price=r[c_price]
-            # If PROMO PRICE exists but is blank, fall back to regular PRICE.
-            if clean_price(price) is None and _norm_col(c_price)=="PROMO PRICE":
-                regular=first_col(df,["PRICE"])
-                price=r[regular] if regular else price
-            stock=r[c_qty] if c_qty else None
-            # Availability like NOW is not numeric; leave stock unknown.
-            row=make_row("UNLIMITED",sku,desc,price,stock=stock,location=sheet.strip(),sku_source=source)
-            if row: rows.append(row)
-    return finalize(rows)
-
-
-def parse_203_trading(xls):
-    """203 Trading consolidated inventory from the 'Inventory Search' sheet."""
-    sheet = "Inventory Search" if "Inventory Search" in xls.sheet_names else xls.sheet_names[0]
-    raw = pd.read_excel(xls, sheet_name=sheet, header=None)
-    h = None
-    for i in range(min(20, len(raw))):
-        vals = [_norm_col(v) for v in raw.iloc[i].tolist() if pd.notna(v)]
-        if "VENDOR PN" in vals and "PRICE" in vals and any(v in vals for v in ["QTY.", "QTY", "QUANTITY"]):
-            h = i
-            break
-    if h is None:
-        return empty_frame()
-
-    df = pd.read_excel(xls, sheet_name=sheet, header=h)
-    c_sku = first_col(df, ["VENDOR PN", "SKU", "MPN", "PART NUMBER"])
-    c_desc = first_col(df, ["DESCRIPTION", "PRODUCT DESCRIPTION"])
-    c_condition = first_col(df, ["CONDITION"])
-    c_qty = first_col(df, ["QTY.", "QTY", "QUANTITY"])
-    c_price = first_col(df, ["PRICE", "COST"])
-    c_form = first_col(df, ["FORM FACTOR", "CATEGORY"])
-
-    rows = []
-    if c_price is None:
-        return empty_frame()
-    for _, r in df.iterrows():
-        sku = safe_text(r[c_sku]) if c_sku else ""
-        desc = safe_text(r[c_desc]) if c_desc else sku
-        condition = safe_text(r[c_condition]) if c_condition else ""
-        form = safe_text(r[c_form]) if c_form else ""
-        row = make_row(
-            "203_TRADING", sku, desc, r[c_price],
-            stock=(r[c_qty] if c_qty else None),
-            location=form, condition=condition, sku_source="FILE"
-        )
-        if row:
-            rows.append(row)
-    return finalize(rows)
-
-
-def parse_worldwide(xls):
-    df=pd.read_excel(xls,sheet_name=xls.sheet_names[0],header=0)
-    rows=[]
-    for _,r in df.iterrows():
-        item=safe_text(r.get("ITEM"))
-        sku=item.split(":",1)[1].strip() if ":" in item else item
-        row=make_row("WORLDWIDE",sku,r.get("Description"),r.get("FOB"),stock=r.get("QTY"),location="Miami")
-        if row: rows.append(row)
-    return finalize(rows)
-
-
-def parse_cellutech(xls):
-    # Legacy .xls workbook with several different product families.
-    # Requires xlrd when uploaded as .xls.
-    parts=[]
-    for sheet in xls.sheet_names:
-        try:
-            su=sheet.strip().upper()
-            if su=="TABLETS":
-                aliases={"sku":["PART NO"],"desc":["DESCRIPTION"],"qty":["ON HAND"],"price":["FOB DUBAI($)","FOB"]}
-            elif su=="HP POLY":
-                aliases={"sku":["PART NUMBER"],"desc":["DESCRIPTION"],"price":["PRICE"],"moq":["MOQ"]}
-            elif su=="STEEL SERIES":
-                aliases={"sku":["PART #"],"desc":["DESCRIPTION"],"qty":["QUANTITY"],"price":["PRICE IN USD","PRICE"]}
-            elif su=="DUBAI LAPTOPS":
-                aliases={"sku":["PART NO"],"desc":["DESCRIPTION"],"qty":["ON HAND"],"price":["FOB DUBAI($)","FOB"]}
-            else:
-                aliases=None
-            d=parse_simple_table(xls,"CELLUTECH",sheet,hdr=0,aliases=aliases)
-            if not d.empty:
-                if "DUBAI" in su:
-                    d["Ubicacion"]="Dubai"
-                parts.append(d)
-        except Exception:
-            continue
-    return pd.concat(parts,ignore_index=True).drop_duplicates() if parts else empty_frame()
-
-
-PARSERS = {
-    "HAIFA": parse_haifa,
-    "ALL PLUS": parse_allplus,
-    "ALLBRANDS": parse_allbrands,
-    "AQUA CONSUMER": lambda x: parse_aqua(x,"AQUA CONSUMER"),
-    "AQUA LAPTOPS": lambda x: parse_aqua(x,"AQUA LAPTOPS"),
-    "ASE": parse_ase,
-    "CELLUTECH": parse_cellutech,
-    "EMOLO": parse_emolo,
-    "H&Z": parse_hz,
-    "INFLUENTIAL": parse_influential,
-    "PRT": parse_prt,
-    "SNK": parse_snk,
-    "SUNRISE": parse_sunrise,
-    "TECH SUPPLIER": parse_tech,
-    "UNLIMITED": parse_unlimited,
-    "203_TRADING": parse_203_trading,
-    "WORLDWIDE": parse_worldwide,
-}
-
-
-def parse_uploaded(uploaded) -> Tuple[pd.DataFrame, dict]:
-    provider=detect_provider(uploaded.name)
-    info={"Archivo":uploaded.name,"Proveedor":provider,"Productos":0,"Estado":"OK","Detalle":""}
-    try:
-        xls=excel_file(uploaded)
-        parser=PARSERS.get(provider)
-        if parser is None:
-            # Last-resort generic parser across sheets.
-            parts=[]
-            for s in xls.sheet_names:
-                d=parse_simple_table(xls,provider,s)
-                if not d.empty: parts.append(d)
-            df=pd.concat(parts,ignore_index=True).drop_duplicates() if parts else empty_frame()
-        else:
-            df=parser(xls)
-        info["Productos"]=len(df)
-        if df.empty:
-            info["Estado"]="⚠️ Sin datos"
-            info["Detalle"]="No se detectaron filas válidas con SKU/Descripción y precio."
-        return df,info
-    except Exception as e:
-        info["Estado"]="❌ Error"
-        info["Detalle"]=str(e)
-        return empty_frame(),info
-
-
-# ============================================================
-# PRICE LIST MANAGER — MVP 3
-# Persistencia + historial + publicación
-# ============================================================
-import sqlite3
-
-SUPPLIER_MASTER_ALIASES = {
-    "H&Z": "H&Z", "SUNRISE": "SUNRISE INTERNATIONAL", "ALL PLUS": "ALLPLUS",
-    "HAIFA": "HAIFA", "ALLBRANDS": "ALLBRANDS", "AQUA CONSUMER": "AQUA",
-    "AQUA LAPTOPS": "AQUA", "SNK": "SNK DISTRIBUTION INC", "WORLDWIDE": "WORLWIDE",
-    "TECH SUPPLIER": "TECH SUPPLIER", "UNLIMITED": "TRADING UNLIMITED",
-    "203_TRADING": "203 TRADING", "EMOLO": "EMOLO", "PRT": "PRT",
-}
-
-APP_DIR = Path(__file__).resolve().parent
-DB_PATH = APP_DIR / "motech_pricelist.db"
-
-
-def db_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db():
-    with db_conn() as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS product_overrides (
+_db_old = '''        conn.execute("""CREATE TABLE IF NOT EXISTS product_overrides (
             product_key TEXT PRIMARY KEY,
             manual_price REAL,
             manual_margin REAL,
@@ -838,131 +583,26 @@ def init_db():
             subcategory_override TEXT,
             updated_at TEXT NOT NULL
         )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS manual_products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            base_item TEXT NOT NULL,
-            supplier_name TEXT NOT NULL DEFAULT 'MANUAL',
-            supplier_code TEXT,
-            brand TEXT,
-            category TEXT,
-            subcategory TEXT,
-            description TEXT NOT NULL,
-            condition TEXT NOT NULL DEFAULT 'NEW',
-            processor TEXT,
-            ram TEXT,
-            storage TEXT,
-            screen TEXT,
-            stock REAL NOT NULL,
-            cost REAL NOT NULL,
-            moq REAL,
-            eta TEXT,
-            active INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS review_actions (
-            issue_key TEXT PRIMARY KEY,
-            status TEXT NOT NULL,
-            note TEXT,
-            updated_at TEXT NOT NULL
-        )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS publication_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            published_at TEXT NOT NULL
-        )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS publication_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_id INTEGER NOT NULL,
-            product_key TEXT NOT NULL,
-            item_publico TEXT,
-            supplier TEXT,
-            cost REAL,
-            published_price REAL,
-            stock_real REAL,
-            stock_publico TEXT,
-            moq TEXT,
-            eta TEXT,
-            category TEXT,
-            subcategory TEXT,
-            description TEXT,
-            condition TEXT,
-            hot_deal INTEGER NOT NULL DEFAULT 0,
-            new_arrival INTEGER NOT NULL DEFAULT 0,
-            low_stock INTEGER NOT NULL DEFAULT 0,
+'''
+_db_new = '''        conn.execute("""CREATE TABLE IF NOT EXISTS product_overrides (
+            product_key TEXT PRIMARY KEY,
+            manual_price REAL,
+            manual_margin REAL,
+            manual_cost REAL,
             hidden INTEGER NOT NULL DEFAULT 0,
-            published_at TEXT NOT NULL
-        )""")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_pub_items_run ON publication_items(run_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_pub_items_product ON publication_items(product_key,published_at)")
-        conn.execute("""CREATE TABLE IF NOT EXISTS app_settings (
-            key TEXT PRIMARY KEY,
-            value TEXT,
+            category_override TEXT,
+            subcategory_override TEXT,
             updated_at TEXT NOT NULL
         )""")
-        existing_cols={r[1] for r in conn.execute("PRAGMA table_info(publication_items)").fetchall()}
-        for col,ctype in [("processor","TEXT"),("ram","TEXT"),("storage","TEXT"),("screen","TEXT")]:
-            if col not in existing_cols:
-                conn.execute(f"ALTER TABLE publication_items ADD COLUMN {col} {ctype}")
-        conn.commit()
+        cols={r["name"] for r in conn.execute("PRAGMA table_info(product_overrides)").fetchall()}
+        if "manual_cost" not in cols:
+            conn.execute("ALTER TABLE product_overrides ADD COLUMN manual_cost REAL")
+'''
+if _db_old not in source:
+    raise RuntimeError("product_overrides schema target not found.")
+source=source.replace(_db_old,_db_new,1)
 
-
-def now_iso():
-    return datetime.datetime.now().isoformat(timespec="seconds")
-
-
-def get_setting(key, default=None):
-    with db_conn() as conn:
-        r=conn.execute("SELECT value FROM app_settings WHERE key=?",(key,)).fetchone()
-    return r["value"] if r else default
-
-
-def set_setting(key, value):
-    with db_conn() as conn:
-        conn.execute("""INSERT INTO app_settings(key,value,updated_at) VALUES(?,?,?)
-            ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at""",
-            (key,str(value),now_iso()))
-        conn.commit()
-
-
-def _password_hash(password):
-    salt=get_setting("client_password_salt")
-    if not salt:
-        salt=hashlib.sha256(os.urandom(32)).hexdigest()
-        set_setting("client_password_salt",salt)
-    return hashlib.sha256((salt+str(password)).encode("utf-8")).hexdigest()
-
-
-def client_password_is_configured():
-    return bool(get_setting("client_password_hash"))
-
-
-def set_client_password(password):
-    if not password or len(password)<4:
-        raise ValueError("La contraseña debe tener al menos 4 caracteres.")
-    set_setting("client_password_hash",_password_hash(password))
-    version=int(get_setting("client_password_version","0") or 0)+1
-    set_setting("client_password_version",version)
-    return version
-
-
-def verify_client_password(password):
-    expected=get_setting("client_password_hash")
-    if not expected:
-        return False
-    return _password_hash(password)==expected
-
-
-def client_password_version():
-    return int(get_setting("client_password_version","0") or 0)
-
-
-def load_overrides():
-    with db_conn() as conn:
-        rows = conn.execute("SELECT * FROM product_overrides").fetchall()
-    return {r["product_key"]: dict(r) for r in rows}
-
-
-def save_override(product_key, manual_price, manual_margin, hidden, category_override=None, subcategory_override=None):
+_save_old = '''def save_override(product_key, manual_price, manual_margin, hidden, category_override=None, subcategory_override=None):
     with db_conn() as conn:
         conn.execute("""INSERT INTO product_overrides
             (product_key,manual_price,manual_margin,hidden,category_override,subcategory_override,updated_at)
@@ -976,829 +616,58 @@ def save_override(product_key, manual_price, manual_margin, hidden, category_ove
                 updated_at=excluded.updated_at
         """, (product_key, manual_price, manual_margin, int(bool(hidden)), category_override, subcategory_override, now_iso()))
         conn.commit()
-
-
-def load_manual_products():
+'''
+_save_new = '''def save_override(product_key, manual_price, manual_margin, hidden, category_override=None, subcategory_override=None, manual_cost=None):
     with db_conn() as conn:
-        rows=conn.execute("SELECT * FROM manual_products WHERE active=1 ORDER BY id DESC").fetchall()
-    return [dict(r) for r in rows]
-
-
-def add_manual_product(data):
-    with db_conn() as conn:
-        conn.execute("""INSERT INTO manual_products
-            (base_item,supplier_name,supplier_code,brand,category,subcategory,description,condition,
-             processor,ram,storage,screen,stock,cost,moq,eta,active,created_at,updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)""", (
-            data["base_item"], data.get("supplier_name") or "MANUAL", data.get("supplier_code") or "MAN",
-            data.get("brand"), data.get("category"), data.get("subcategory"), data["description"], data.get("condition") or "NEW",
-            data.get("processor"), data.get("ram"), data.get("storage"), data.get("screen"), data["stock"], data["cost"],
-            data.get("moq"), data.get("eta"), now_iso(), now_iso()
-        ))
+        conn.execute("""INSERT INTO product_overrides
+            (product_key,manual_price,manual_margin,manual_cost,hidden,category_override,subcategory_override,updated_at)
+            VALUES (?,?,?,?,?,?,?,?)
+            ON CONFLICT(product_key) DO UPDATE SET
+                manual_price=excluded.manual_price,
+                manual_margin=excluded.manual_margin,
+                manual_cost=excluded.manual_cost,
+                hidden=excluded.hidden,
+                category_override=excluded.category_override,
+                subcategory_override=excluded.subcategory_override,
+                updated_at=excluded.updated_at
+        """, (product_key, manual_price, manual_margin, manual_cost, int(bool(hidden)), category_override, subcategory_override, now_iso()))
         conn.commit()
+'''
+if _save_old not in source:
+    raise RuntimeError("save_override target not found.")
+source=source.replace(_save_old,_save_new,1)
 
-
-def deactivate_manual_product(row_id):
-    with db_conn() as conn:
-        conn.execute("UPDATE manual_products SET active=0, updated_at=? WHERE id=?", (now_iso(), int(row_id)))
-        conn.commit()
-
-
-def review_status(issue_key):
-    with db_conn() as conn:
-        r=conn.execute("SELECT status FROM review_actions WHERE issue_key=?",(issue_key,)).fetchone()
-    return r["status"] if r else None
-
-
-def save_review_action(issue_key,status,note=""):
-    with db_conn() as conn:
-        conn.execute("""INSERT INTO review_actions(issue_key,status,note,updated_at) VALUES(?,?,?,?)
-            ON CONFLICT(issue_key) DO UPDATE SET status=excluded.status,note=excluded.note,updated_at=excluded.updated_at""",
-            (issue_key,status,note,now_iso()))
-        conn.commit()
-
-
-def latest_publication_run():
-    with db_conn() as conn:
-        r=conn.execute("SELECT id,published_at FROM publication_runs ORDER BY id DESC LIMIT 1").fetchone()
-    return dict(r) if r else None
-
-
-def latest_publication_items():
-    run=latest_publication_run()
-    if not run:
-        return pd.DataFrame()
-    with db_conn() as conn:
-        rows=conn.execute("SELECT * FROM publication_items WHERE run_id=? ORDER BY id",(run["id"],)).fetchall()
-    return pd.DataFrame([dict(r) for r in rows])
-
-
-def product_history(product_key, days=7):
-    cutoff=(datetime.datetime.now()-datetime.timedelta(days=days)).isoformat(timespec="seconds")
-    with db_conn() as conn:
-        rows=conn.execute("""SELECT pi.* FROM publication_items pi
-            WHERE pi.product_key=? AND pi.published_at>=? ORDER BY pi.published_at DESC""",
-            (product_key,cutoff)).fetchall()
-    return [dict(r) for r in rows]
-
-
-def prune_publication_history(days=7):
-    cutoff=(datetime.datetime.now()-datetime.timedelta(days=days)).isoformat(timespec="seconds")
-    with db_conn() as conn:
-        old=conn.execute("SELECT id FROM publication_runs WHERE published_at<?",(cutoff,)).fetchall()
-        ids=[r["id"] for r in old]
-        if ids:
-            marks=",".join("?" for _ in ids)
-            conn.execute(f"DELETE FROM publication_items WHERE run_id IN ({marks})",ids)
-            conn.execute(f"DELETE FROM publication_runs WHERE id IN ({marks})",ids)
-        conn.commit()
-
-
-def publish_snapshot(df):
-    ts=now_iso()
-    with db_conn() as conn:
-        cur=conn.execute("INSERT INTO publication_runs(published_at) VALUES(?)",(ts,))
-        run_id=cur.lastrowid
-        for _,r in df.iterrows():
-            if bool(r.get("Oculto",False)):
-                continue
-            conn.execute("""INSERT INTO publication_items
-                (run_id,product_key,item_publico,supplier,cost,published_price,stock_real,stock_publico,moq,eta,category,subcategory,description,condition,hot_deal,new_arrival,low_stock,hidden,published_at,processor,ram,storage,screen)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(
-                run_id,safe_text(r.get("PRODUCT_KEY")),safe_text(r.get("ITEM_PUBLICO")),safe_text(r.get("Proveedor")),
-                float(r.get("Costo")) if pd.notna(r.get("Costo")) else None,
-                float(r.get("Precio_Publicado")) if pd.notna(r.get("Precio_Publicado")) else None,
-                float(r.get("Stock_Real")) if pd.notna(r.get("Stock_Real")) else None,safe_text(r.get("Stock_Publico")),
-                safe_text(r.get("MOQ_Final")),safe_text(r.get("ETA_Final")),safe_text(r.get("Categoria")),safe_text(r.get("Subcategoria_Manual")),
-                safe_text(r.get("Descripcion")),safe_text(r.get("Condicion_Normalizada")),int(bool(r.get("HOT_DEAL",False))),
-                int(bool(r.get("NEW_ARRIVAL",False))),int(bool(r.get("LOW_STOCK",False))),0,ts,
-                safe_text(r.get("Procesador")),safe_text(r.get("RAM")),safe_text(r.get("Almacenamiento")),safe_text(r.get("Pantalla"))))
-        conn.commit()
-    prune_publication_history(7)
-    return run_id,ts
-
-
-init_db()
-
-
-def _clean_master_name(v):
-    return re.sub(r"\s+", " ", safe_text(v).strip()).upper()
-
-
-def load_supplier_master():
-    candidates=[APP_DIR/"supplier_master.xlsx",Path.cwd()/"supplier_master.xlsx"]
-    p=next((x for x in candidates if x.exists()),None)
-    if p is None:
-        return pd.DataFrame(columns=["CODIGO PROVEEDOR","MOQ","ETA","NOMBRE","_NOMBRE_N"])
-    try:
-        df=pd.read_excel(p)
-        rename={}
-        for c in df.columns:
-            n=_norm_col(c)
-            if "CODIGO" in n and "PROVEEDOR" in n: rename[c]="CODIGO PROVEEDOR"
-            elif n=="MOQ": rename[c]="MOQ"
-            elif n=="ETA": rename[c]="ETA"
-            elif n in {"NOMBRE","PROVEEDOR","SUPPLIER"}: rename[c]="NOMBRE"
-        df=df.rename(columns=rename)
-        for c in ["CODIGO PROVEEDOR","MOQ","ETA","NOMBRE"]:
-            if c not in df.columns: df[c]=pd.NA
-        df["_NOMBRE_N"]=df["NOMBRE"].map(_clean_master_name)
-        return df[["CODIGO PROVEEDOR","MOQ","ETA","NOMBRE","_NOMBRE_N"]]
-    except Exception:
-        return pd.DataFrame(columns=["CODIGO PROVEEDOR","MOQ","ETA","NOMBRE","_NOMBRE_N"])
-
-
-def supplier_defaults(provider,master):
-    target=SUPPLIER_MASTER_ALIASES.get(provider,provider)
-    if master.empty: return "",None,None
-    hit=master[master["_NOMBRE_N"]==_clean_master_name(target)]
-    if hit.empty: return "",None,None
-    r=hit.iloc[0]
-    return safe_text(r.get("CODIGO PROVEEDOR")),clean_qty(r.get("MOQ")),clean_qty(r.get("ETA"))
-
-
-def normalize_category_name(v):
-    s=re.sub(r"^[^A-Za-z0-9]+","",safe_text(v)).strip()
-    return s.upper() if s else "OTHER"
-
-
-def base_item(sku):
-    return re.sub(r"_[A-Z0-9]{2,6}$","",safe_text(sku).upper().strip())
-
-
-def public_stock(stock):
-    q=clean_qty(stock)
-    if q is None or q<=0: return ""
-    if q>100: return "100+"
-    if q>20: return "20+"
-    return str(int(q)) if float(q).is_integer() else str(q)
-
-
-def default_margin_pct(category, cost):
-    cat=safe_text(category).upper()
-    if "LAPTOP" in cat or "NOTEBOOK" in cat or "DESKTOP" in cat:
-        return 2.0
-    return None
-
-
-def manual_products_frame():
-    rows=[]
-    for m in load_manual_products():
-        rows.append({
-            "Proveedor": safe_text(m.get("supplier_name")) or "MANUAL",
-            "SKU": safe_text(m.get("base_item")).upper(),
-            "SKU_Fuente": "MANUAL",
-            "Descripcion": safe_text(m.get("description")),
-            "Condicion": safe_text(m.get("condition")) or "NEW",
-            "Precio": float(m.get("cost")),
-            "Stock": float(m.get("stock")),
-            "Stock_Miami": pd.NA,
-            "Stock_NY": pd.NA,
-            "En_Transito": 0,
-            "MOQ": m.get("moq"),
-            "ETA": safe_text(m.get("eta")),
-            "Ubicacion": "MANUAL",
-            "_MANUAL_ID": m.get("id"),
-            "_MANUAL_CODE": safe_text(m.get("supplier_code")) or "MAN",
-            "_MANUAL_CATEGORY": safe_text(m.get("category")),
-            "_MANUAL_SUBCATEGORY": safe_text(m.get("subcategory")),
-            "_MANUAL_PROCESSOR": safe_text(m.get("processor")),
-            "_MANUAL_RAM": safe_text(m.get("ram")),
-            "_MANUAL_STORAGE": safe_text(m.get("storage")),
-            "_MANUAL_SCREEN": safe_text(m.get("screen")),
-        })
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
-
-
-def prepare_offers(df_all,master):
-    df=df_all.copy()
-    df["Categoria"]=df.apply(lambda r:normalize_category_name(clasificar_categoria(r["Descripcion"],r["SKU"],r.get("Condicion",""))),axis=1)
-    specs=df.apply(lambda r:extraer_especificaciones(f'{r["Descripcion"]} {r["SKU"]}'),axis=1)
-    specs.columns=["Procesador","RAM","Almacenamiento","Pantalla"]
-    df[["Procesador","RAM","Almacenamiento","Pantalla"]]=specs
-
-    if "_MANUAL_CATEGORY" in df.columns:
-        mask=df["_MANUAL_CATEGORY"].fillna("").astype(str).str.strip().ne("")
-        df.loc[mask,"Categoria"]=df.loc[mask,"_MANUAL_CATEGORY"].map(normalize_category_name)
-        for target,src in [("Procesador","_MANUAL_PROCESSOR"),("RAM","_MANUAL_RAM"),("Almacenamiento","_MANUAL_STORAGE"),("Pantalla","_MANUAL_SCREEN")]:
-            if src in df.columns:
-                m=df[src].fillna("").astype(str).str.strip().ne("")
-                df.loc[m,target]=df.loc[m,src]
-
-    df["ITEM_BASE"]=df["SKU"].map(base_item)
-    codes=[]; moqs=[]; etas=[]; full=[]
-    for _,r in df.iterrows():
-        if safe_text(r.get("SKU_Fuente")).upper()=="MANUAL":
-            code=safe_text(r.get("_MANUAL_CODE")) or "MAN"; dm=de=None
-        else:
-            code,dm,de=supplier_defaults(r["Proveedor"],master)
-        rm=clean_qty(r.get("MOQ")); re_=safe_text(r.get("ETA"))
-        m=rm if rm is not None else dm
-        e=re_ if re_ else (int(de) if de is not None else "")
-        codes.append(code); moqs.append(m); etas.append(e)
-        full.append(f'{base_item(r["SKU"])}_{code}' if code else base_item(r["SKU"]))
-    df["Codigo_Proveedor"]=codes; df["MOQ_Final"]=moqs; df["ETA_Final"]=etas; df["ITEM_PUBLICO"]=full
-    df["Stock_Real"]=pd.to_numeric(df["Stock"],errors="coerce")
-    df["Costo"]=pd.to_numeric(df["Precio"],errors="coerce")
-    df["Condicion_Normalizada"]=df["Condicion"].fillna("").astype(str).str.upper().str.strip().replace({"":"NEW"})
-    df["Elegible_Stock"]=df["Stock_Real"].fillna(0)>20
-    moq_num=pd.to_numeric(df["MOQ_Final"],errors="coerce")
-    df["Elegible_MOQ"]=moq_num.isna()|(moq_num<=df["Stock_Real"].fillna(0))
-    df["Elegible"]=df["Elegible_Stock"]&df["Elegible_MOQ"]&df["Costo"].notna()
-    key_cols=["ITEM_BASE","Condicion_Normalizada","Procesador","RAM","Almacenamiento","Pantalla"]
-    for c in key_cols: df[c]=df[c].fillna("").astype(str).str.upper().str.strip()
-    df["PRODUCT_KEY"]=df[key_cols].agg("|".join,axis=1)
-    return df
-
-
-def _provider_promo_flag(row):
-    text=(safe_text(row.get("Descripcion"))+" "+safe_text(row.get("Ubicacion"))).upper()
-    return ("HOT DEAL" in text) or ("PRICE DROP" in text) or ("PROMO" in text and "PRICE" in text)
-
-
-def select_winners(offers, overrides):
-    eligible=offers[offers["Elegible"]].copy()
-    latest=latest_publication_items()
-    prev_map={} if latest.empty else {r["product_key"]:r for _,r in latest.iterrows()}
-    winners=[]; alternatives={}
-    for key,g in eligible.groupby("PRODUCT_KEY",dropna=False):
-        ordered=g.sort_values(["Costo","Stock_Real"],ascending=[True,False]).reset_index(drop=True)
-        if ordered.empty: continue
-        w=ordered.iloc[0].copy()
-        w["Stock_Publico"]=public_stock(w["Stock_Real"])
-        w["Alternativas"]=max(len(ordered)-1,0)
-        ov=overrides.get(key,{})
+_win_old = '''        ov=overrides.get(key,{})
         margin=ov.get("manual_margin")
-        if margin is None: margin=default_margin_pct(w.get("Categoria"),w.get("Costo"))
-        w["Margen_Pct"]=margin
-        suggested=(float(w["Costo"])*(1+float(margin)/100)) if margin is not None and pd.notna(w["Costo"]) else None
-        w["Precio_Sugerido"]=suggested
-        manual=ov.get("manual_price")
-        w["Precio_Publicado"]=float(manual) if manual is not None else suggested
-        w["Precio_Manual"]=manual is not None
-        w["Oculto"]=bool(ov.get("hidden",0))
-        if safe_text(ov.get("category_override")): w["Categoria"]=normalize_category_name(ov.get("category_override"))
-        w["Subcategoria_Manual"]=safe_text(ov.get("subcategory_override"))
-        prev=prev_map.get(key)
-        w["Costo_Anterior"]=float(prev["cost"]) if prev is not None and pd.notna(prev.get("cost")) else pd.NA
-        if prev is not None and pd.notna(prev.get("cost")) and float(prev.get("cost"))!=0:
-            w["Variacion_Costo_Pct"]=(float(w["Costo"])-float(prev["cost"]))/float(prev["cost"])*100
-        else:
-            w["Variacion_Costo_Pct"]=pd.NA
-        # Nuevo si no estaba en la última publicación. La etiqueta dura 3 días desde su primera publicación.
-        hist=product_history(key,7)
-        if not hist:
-            new_arrival=True
-        else:
-            first=min(datetime.datetime.fromisoformat(h["published_at"]) for h in hist if h.get("published_at"))
-            new_arrival=(datetime.datetime.now()-first).days < 3
-        w["NEW_ARRIVAL"]=bool(new_arrival)
-        # HOT DEAL por señal explícita del proveedor. La caída histórica se muestra aparte y >25% exige revisión.
-        w["HOT_DEAL"]=bool(_provider_promo_flag(w))
-        w["LOW_STOCK"]=False
-        winners.append(w.to_dict()); alternatives[key]=ordered
+'''
+_win_new = '''        ov=overrides.get(key,{})
+        w["Costo_Proveedor"]=w.get("Costo")
+        manual_cost=ov.get("manual_cost")
+        if manual_cost is not None:
+            w["Costo"]=float(manual_cost)
+        w["Costo_Manual"]=manual_cost is not None
+        margin=ov.get("manual_margin")
+'''
+if _win_old not in source:
+    raise RuntimeError("winner manual cost target not found.")
+source=source.replace(_win_old,_win_new,1)
 
-    # Productos ya publicados que hoy no tienen oferta >20: permitir LOW STOCK hasta 2 días; día 3 se retira.
-    existing_keys={x["PRODUCT_KEY"] for x in winners}
-    if not latest.empty:
-        for _,prev in latest.iterrows():
-            key=safe_text(prev.get("product_key"))
-            if not key or key in existing_keys:
-                continue
-            current=offers[offers["PRODUCT_KEY"]==key].copy()
-            current=current[(current["Costo"].notna()) & (current["Stock_Real"].fillna(0)>0) & (current["Stock_Real"].fillna(0)<=20)]
-            if current.empty:
-                continue
-            current=current.sort_values(["Costo","Stock_Real"],ascending=[True,False]).reset_index(drop=True)
-            c=current.iloc[0].copy()
-            # Cuenta publicaciones consecutivas previas marcadas LOW STOCK, máximo 2 publicaciones antes de retirar.
-            hist=product_history(key,7)
-            consecutive=0
-            for h in hist:
-                if int(h.get("low_stock") or 0)==1: consecutive+=1
-                else: break
-            if consecutive>=2:
-                continue
-            c["Stock_Publico"]=public_stock(c["Stock_Real"])
-            c["Alternativas"]=max(len(current)-1,0)
-            ov=overrides.get(key,{})
+_low_old = '''            ov=overrides.get(key,{})
             margin=ov.get("manual_margin")
-            if margin is None: margin=default_margin_pct(c.get("Categoria"),c.get("Costo"))
-            c["Margen_Pct"]=margin
-            suggested=(float(c["Costo"])*(1+float(margin)/100)) if margin is not None and pd.notna(c["Costo"]) else None
-            c["Precio_Sugerido"]=suggested
-            manual=ov.get("manual_price")
-            c["Precio_Publicado"]=float(manual) if manual is not None else suggested
-            c["Precio_Manual"]=manual is not None
-            c["Oculto"]=bool(ov.get("hidden",0))
-            if safe_text(ov.get("category_override")): c["Categoria"]=normalize_category_name(ov.get("category_override"))
-            c["Subcategoria_Manual"]=safe_text(ov.get("subcategory_override"))
-            c["Costo_Anterior"]=float(prev["cost"]) if pd.notna(prev.get("cost")) else pd.NA
-            if pd.notna(prev.get("cost")) and float(prev.get("cost"))!=0:
-                c["Variacion_Costo_Pct"]=(float(c["Costo"])-float(prev["cost"]))/float(prev["cost"])*100
-            else: c["Variacion_Costo_Pct"]=pd.NA
-            c["NEW_ARRIVAL"]=False; c["HOT_DEAL"]=bool(_provider_promo_flag(c)); c["LOW_STOCK"]=True
-            winners.append(c.to_dict()); alternatives[key]=current
+'''
+_low_new = '''            ov=overrides.get(key,{})
+            c["Costo_Proveedor"]=c.get("Costo")
+            manual_cost=ov.get("manual_cost")
+            if manual_cost is not None:
+                c["Costo"]=float(manual_cost)
+            c["Costo_Manual"]=manual_cost is not None
+            margin=ov.get("manual_margin")
+'''
+if _low_old not in source:
+    raise RuntimeError("low stock manual cost target not found.")
+source=source.replace(_low_old,_low_new,1)
 
-    return pd.DataFrame(winners),alternatives
-
-
-def build_review_issues(offers, winners, import_log):
-    issues=[]
-    for _,r in import_log.iterrows():
-        if int(r.get("Productos",0) or 0)<=0:
-            issues.append({"ISSUE_KEY":f'FILE::{r.get("Archivo")}',"Tipo":"ARCHIVO","Producto":"—","Proveedor":r.get("Proveedor"),
-                           "Motivo":"Verificar archivo Excel; no se importaron productos.","Detalle":safe_text(r.get("Detalle"))})
-    bad=offers[~offers["Elegible"]].copy()
-    for _,r in bad.iterrows():
-        blocking=[]
-        if not bool(r.get("Elegible_MOQ")): blocking.append("MOQ mayor que stock")
-        if pd.isna(r.get("Costo")): blocking.append("Costo inválido")
-        if blocking:
-            ik=f'OFFER::{r.get("Proveedor")}::{r.get("PRODUCT_KEY")}::{"/".join(blocking)}'
-            issues.append({"ISSUE_KEY":ik,"Tipo":"PRODUCTO","Producto":r.get("ITEM_PUBLICO"),"Proveedor":r.get("Proveedor"),
-                           "Motivo":"; ".join(blocking),"Detalle":safe_text(r.get("Descripcion"))})
-    for _,r in winners.iterrows():
-        cat=safe_text(r.get("Categoria")).upper()
-        if any(x in cat for x in ["LAPTOP","NOTEBOOK","DESKTOP"]):
-            missing=[]
-            if not safe_text(r.get("Procesador")): missing.append("procesador")
-            if not safe_text(r.get("RAM")): missing.append("RAM")
-            if not safe_text(r.get("Almacenamiento")): missing.append("almacenamiento")
-            if missing:
-                ik=f'ATTR::{r.get("PRODUCT_KEY")}::{",".join(missing)}'
-                issues.append({"ISSUE_KEY":ik,"Tipo":"ATRIBUTOS","Producto":r.get("ITEM_PUBLICO"),"Proveedor":r.get("Proveedor"),
-                               "Motivo":"Información incompleta: "+", ".join(missing),"Detalle":safe_text(r.get("Descripcion"))})
-    # Variación de costo > ±25% respecto a la última publicación: revisión obligatoria.
-    for _,r in winners.iterrows():
-        v=pd.to_numeric(pd.Series([r.get("Variacion_Costo_Pct")]),errors="coerce").iloc[0]
-        if pd.notna(v) and abs(float(v))>25:
-            ik=f'PRICEVAR::{r.get("PRODUCT_KEY")}::{round(float(v),2)}'
-            issues.append({"ISSUE_KEY":ik,"Tipo":"PRECIO","Producto":r.get("ITEM_PUBLICO"),"Proveedor":r.get("Proveedor"),
-                           "Motivo":f'Variación de costo {float(v):+.1f}% (supera ±25%)',
-                           "Detalle":f'Costo anterior: {r.get("Costo_Anterior")} · Costo actual: {r.get("Costo")}'})
-        if bool(r.get("Precio_Manual")) and pd.notna(v) and abs(float(v))>0.01:
-            ik=f'MANPRICE::{r.get("PRODUCT_KEY")}::{round(float(r.get("Costo",0)),2)}'
-            issues.append({"ISSUE_KEY":ik,"Tipo":"PRECIO MANUAL","Producto":r.get("ITEM_PUBLICO"),"Proveedor":r.get("Proveedor"),
-                           "Motivo":"El costo cambió; revisar precio manual.",
-                           "Detalle":f'Variación de costo: {float(v):+.1f}%'})
-    pending=[]
-    for i in issues:
-        status=review_status(i["ISSUE_KEY"])
-        if status not in {"APROBADO","IGNORADO"}: pending.append(i)
-    return pd.DataFrame(pending)
-
-
-def render_manual_form(form_key, offers=None):
-    with st.form(form_key):
-        a,b,c=st.columns(3)
-        with a:
-            bi=st.text_input("ITEM base *")
-            brand=st.text_input("Marca")
-            category=st.selectbox("Categoría",["LAPTOPS","DESKTOPS","MONITORS","GAMING","MULTIMEDIA","STORAGE","NETWORKING","ACCESSORIES & OTHERS","REFURBISHED","OTHER"])
-            subcat=st.text_input("Subcategoría")
-        with b:
-            cond=st.selectbox("Condición",["NEW","REFURBISHED","OFF-LEASE"])
-            stock=st.number_input("Stock *",min_value=0.0,value=0.0,step=1.0)
-            cost=st.number_input("Costo USD *",min_value=0.0,value=0.0,step=1.0)
-            moq=st.number_input("MOQ",min_value=0.0,value=1.0,step=1.0)
-        with c:
-            supplier=st.text_input("Fuente / proveedor manual",value="MANUAL")
-            code=st.text_input("Código para sufijo",value="MAN")
-            eta=st.text_input("ETA")
-            processor=st.text_input("Procesador")
-            ram=st.text_input("RAM")
-            storage=st.text_input("Almacenamiento")
-            screen=st.text_input("Pantalla")
-        desc=st.text_area("Modelo y descripción *")
-        submitted=st.form_submit_button("Guardar producto manual",type="primary")
-        if submitted:
-            if not bi.strip() or not desc.strip() or cost<=0 or stock<=0:
-                st.error("Completa ITEM, descripción, costo y stock.")
-                return
-            if offers is not None and not offers.empty:
-                existing=offers[offers["ITEM_BASE"].astype(str).str.upper()==bi.strip().upper()]
-                if not existing.empty:
-                    st.warning(f"Este ITEM ya existe en {existing['Proveedor'].nunique()} fuente(s). Se guardará como una oferta adicional y competirá por mejor costo.")
-            add_manual_product({"base_item":bi.strip().upper(),"supplier_name":supplier.strip() or "MANUAL","supplier_code":code.strip().upper() or "MAN",
-                "brand":brand,"category":category,"subcategory":subcat,"description":desc,"condition":cond,"processor":processor,"ram":ram,
-                "storage":storage,"screen":screen,"stock":stock,"cost":cost,"moq":moq,"eta":eta})
-            st.success("Producto manual guardado.")
-            st.rerun()
-
-
-
-# ============================================================
-# PUBLIC PRICE LIST (ENGLISH)
-# ============================================================
-def infer_public_subcategory(category, description):
-    cat=safe_text(category).upper(); d=safe_text(description).upper()
-    if "LAPTOP" in cat or "NOTEBOOK" in cat:
-        if "CHROMEBOOK" in d or "CHROME OS" in d: return "Chromebook"
-        if any(x in d for x in ["2-IN-1","2 IN 1","CONVERTIBLE","X360"]): return "2-in-1"
-        if any(x in d for x in ["WORKSTATION","PRECISION","ZBOOK","THINKPAD P"]): return "Workstation"
-        if any(x in d for x in ["GAMING","LEGION","ROG ","TUF ","ALIENWARE","OMEN"]): return "Gaming"
-        if any(x in d for x in ["THINKPAD","LATITUDE","ELITEBOOK","PROBOOK","EXPERTBOOK"]): return "Business"
-        return "Notebook"
-    if "DESKTOP" in cat:
-        if any(x in d for x in ["ALL-IN-ONE","ALL IN ONE"," AIO "]): return "All-in-One"
-        if any(x in d for x in ["MINI PC","MINI DESKTOP","TINY","MICRO"]): return "Mini PC"
-        if any(x in d for x in ["SFF","SMALL FORM FACTOR"]): return "SFF"
-        if "WORKSTATION" in d: return "Workstation"
-        return "Tower"
-    if "MONITOR" in cat:
-        if "GAMING" in d: return "Gaming"
-        if "CURVED" in d: return "Curved"
-        if "PORTABLE" in d: return "Portable"
-        return "Monitor"
-    if "STORAGE" in cat:
-        if "SSD" in d or "NVME" in d: return "SSD"
-        if "HDD" in d or "HARD DRIVE" in d: return "HDD"
-        if "USB" in d or "FLASH" in d: return "USB / Flash"
-    return ""
-
-
-def _public_brand(description):
-    d=safe_text(description).strip(); up=d.upper()
-    known=["LENOVO","HP","DELL","ASUS","ACER","APPLE","MSI","SAMSUNG","LG","MICROSOFT","INTEL","AMD","LOGITECH","JBL","SONY","CANON","EPSON","BROTHER","KINGSTON","SANDISK","WESTERN DIGITAL","WD","SEAGATE"]
-    for b in known:
-        if re.search(rf"\b{re.escape(b)}\b",up): return b
-    return ""
-
-
-def render_public_price_list():
-    st.markdown("""
-    <style>
-      section[data-testid="stSidebar"]{display:none!important;}
-      .public-title{font-size:30px;font-weight:850;color:#1B365D;line-height:1.1;margin-bottom:2px;}
-      .public-sub{font-size:14px;color:#667085;margin-bottom:12px;}
-      .public-card{border:1px solid #E3E8EF;border-radius:12px;padding:14px 16px;margin-bottom:10px;background:#fff;}
-      .public-brand{font-size:11px;font-weight:800;letter-spacing:.08em;color:#667085;}
-      .public-desc{font-size:16px;font-weight:750;color:#162B46;margin:2px 0 4px 0;}
-      .public-item{font-size:12px;color:#667085;font-family:monospace;}
-      .public-price{font-size:20px;font-weight:850;color:#1B365D;}
-      .tag{display:inline-block;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:750;margin-right:5px;margin-top:5px;background:#F2F4F7;color:#344054;}
-      .tag-hot{background:#FFF1E8;color:#B54708}.tag-new{background:#ECFDF3;color:#027A48}.tag-low{background:#FEF3F2;color:#B42318}
-    </style>
-    """,unsafe_allow_html=True)
-
-    logo_candidates=[APP_DIR/"logo.png",APP_DIR/"Logo.png",Path.cwd()/"logo.png"]
-    logo=next((p for p in logo_candidates if p.exists()),None)
-    a,b=st.columns([0.65,5.35],vertical_alignment="center")
-    if logo:
-        with a: st.image(str(logo),width=86)
-    with b:
-        st.markdown('<div class="public-title">Motech Miami Price List</div>',unsafe_allow_html=True)
-        st.markdown('<div class="public-sub">Wholesale Technology · Updated inventory and pricing</div>',unsafe_allow_html=True)
-
-    run=latest_publication_run(); df=latest_publication_items()
-    if run:
-        try: stamp=datetime.datetime.fromisoformat(run["published_at"]).strftime("%b %d, %Y · %I:%M %p")
-        except Exception: stamp=run["published_at"].replace("T"," ")
-        st.caption(f"Last update: {stamp}")
-    if df.empty:
-        st.info("The price list is not available yet. Please check back after the next update."); return
-
-    for c in ["category","subcategory","description","condition","processor","ram","storage","screen","stock_publico","moq","eta","item_publico"]:
-        if c not in df.columns: df[c]=""
-    if "hidden" in df.columns: df=df[df["hidden"].fillna(0).astype(int)==0].copy()
-    df["subcategory_display"]=df.apply(lambda r:safe_text(r.get("subcategory")) or infer_public_subcategory(r.get("category"),r.get("description")),axis=1)
-    df["brand"]=df["description"].map(_public_brand)
-
-    current_version=client_password_version()
-    unlocked=(st.session_state.get("public_price_version")==current_version and current_version>0)
-    unlock_col,info_col=st.columns([1,3])
-    with unlock_col:
-        if unlocked:
-            st.success("🔓 Prices unlocked")
-            if st.button("Lock prices",use_container_width=True):
-                st.session_state.pop("public_price_version",None); st.rerun()
-        else:
-            with st.popover("🔒 Unlock Prices",use_container_width=True):
-                if not client_password_is_configured(): st.info("Price access is not configured yet. Please contact Motech.")
-                else:
-                    pwd=st.text_input("Enter password",type="password",key="public_unlock_password")
-                    if st.button("Unlock",type="primary",use_container_width=True,key="public_unlock_btn"):
-                        if verify_client_password(pwd): st.session_state["public_price_version"]=client_password_version(); st.rerun()
-                        else: st.error("Incorrect password.")
-    with info_col: st.caption("Products are visible to everyone. Prices require the Motech access password.")
-
-    cats=sorted([x for x in df["category"].fillna("").astype(str).unique().tolist() if x])
-    category_options=["HOT DEALS"]+cats
-    default_cat="HOT DEALS" if int(df["hot_deal"].fillna(0).sum()) else (cats[0] if cats else None)
-    selected_cat=st.segmented_control("Category",category_options,default=default_cat,selection_mode="single")
-    view=df.copy()
-    if selected_cat=="HOT DEALS": view=view[view["hot_deal"].fillna(0).astype(int)==1]
-    elif selected_cat: view=view[view["category"]==selected_cat]
-
-    search=st.text_input("Search",placeholder="Search by brand, item, model or specifications…")
-    f1,f2,f3,f4=st.columns(4)
-    with f1:
-        brands=sorted(x for x in view["brand"].unique().tolist() if x); brand=st.selectbox("Brand",["All"]+brands)
-    with f2:
-        subs=sorted(x for x in view["subcategory_display"].unique().tolist() if x); sub=st.selectbox("Subcategory",["All"]+subs)
-    with f3:
-        conditions=sorted(x for x in view["condition"].fillna("").astype(str).unique().tolist() if x); condition=st.selectbox("Condition",["All"]+conditions)
-    with f4:
-        stock_filter=st.selectbox("Availability",["All","20+","100+","Low Stock"])
-    if brand!="All": view=view[view["brand"]==brand]
-    if sub!="All": view=view[view["subcategory_display"]==sub]
-    if condition!="All": view=view[view["condition"]==condition]
-    if stock_filter=="20+": view=view[view["stock_publico"].astype(str)=="20+"]
-    elif stock_filter=="100+": view=view[view["stock_publico"].astype(str)=="100+"]
-    elif stock_filter=="Low Stock": view=view[view["low_stock"].fillna(0).astype(int)==1]
-
-    if selected_cat and any(k in selected_cat.upper() for k in ["LAPTOP","NOTEBOOK","DESKTOP"]):
-        t1,t2,t3,t4=st.columns(4)
-        with t1:
-            vals=sorted(x for x in view["processor"].fillna("").astype(str).unique().tolist() if x); cpu=st.selectbox("Processor",["All"]+vals)
-        with t2:
-            vals=sorted(x for x in view["ram"].fillna("").astype(str).unique().tolist() if x); ram=st.selectbox("RAM",["All"]+vals)
-        with t3:
-            vals=sorted(x for x in view["storage"].fillna("").astype(str).unique().tolist() if x); storage=st.selectbox("Storage",["All"]+vals)
-        with t4:
-            vals=sorted(x for x in view["screen"].fillna("").astype(str).unique().tolist() if x); screen=st.selectbox("Screen Size",["All"]+vals)
-        if cpu!="All": view=view[view["processor"]==cpu]
-        if ram!="All": view=view[view["ram"]==ram]
-        if storage!="All": view=view[view["storage"]==storage]
-        if screen!="All": view=view[view["screen"]==screen]
-
-    if search.strip():
-        q=search.strip().upper()
-        hay=(view["item_publico"].fillna("").astype(str)+" "+view["description"].fillna("").astype(str)+" "+view["brand"].fillna("").astype(str)+" "+view["processor"].fillna("").astype(str)+" "+view["ram"].fillna("").astype(str)+" "+view["storage"].fillna("").astype(str)).str.upper()
-        view=view[hay.str.contains(re.escape(q),na=False)]
-
-    st.caption(f"{len(view):,} products")
-    if view.empty:
-        st.info("No products match the selected filters."); return
-
-    for _,r in view.head(500).iterrows():
-        brand=safe_text(r.get("brand")) or "MOTECH"
-        desc=html.escape(safe_text(r.get("description"))); item=html.escape(safe_text(r.get("item_publico")))
-        specs=" · ".join(x for x in [safe_text(r.get("processor")),safe_text(r.get("ram")),safe_text(r.get("storage")),safe_text(r.get("screen"))] if x)
-        tags=[]
-        if int(r.get("hot_deal") or 0): tags.append('<span class="tag tag-hot">🔥 HOT DEAL</span>')
-        if int(r.get("new_arrival") or 0): tags.append('<span class="tag tag-new">NEW ARRIVAL</span>')
-        if int(r.get("low_stock") or 0): tags.append('<span class="tag tag-low">LOW STOCK</span>')
-        stock=html.escape(safe_text(r.get("stock_publico"))); moq=html.escape(safe_text(r.get("moq"))); eta=html.escape(safe_text(r.get("eta"))); condition=html.escape(safe_text(r.get("condition")))
-        price=f'${float(r["published_price"]):,.2f}' if unlocked and pd.notna(r.get("published_price")) else '🔒 Enter password to view price'
-        card=f"""<div class="public-card">
-          <div class="public-brand">{html.escape(brand)}</div>
-          <div class="public-desc">{desc}</div>
-          <div class="public-item">{item}</div>
-          <div style="font-size:12px;color:#475467;margin-top:5px;">{html.escape(specs)}</div>
-          <div>{''.join(tags)}</div>
-          <div style="margin-top:8px;font-size:12px;color:#344054;">Stock: <b>{stock}</b> &nbsp; · &nbsp; MOQ: <b>{moq or '-'}</b> &nbsp; · &nbsp; ETA: <b>{eta or '-'}</b> &nbsp; · &nbsp; Condition: <b>{condition or '-'}</b></div>
-          <div class="public-price" style="margin-top:8px;">{html.escape(price)}</div>
-        </div>"""
-        st.markdown(card,unsafe_allow_html=True)
-    if len(view)>500: st.info("Showing the first 500 results. Use filters or search to narrow the list.")
-
-
-# Public URL: append ?mode=public. The default remains the Spanish internal operator panel.
-_app_mode = safe_text(st.query_params.get("mode","admin")).lower()
-if _app_mode == "public":
-    render_public_price_list()
-    st.stop()
-
-logo_path=next((p for p in [APP_DIR/"logo.png",APP_DIR/"Logo.png",Path.cwd()/"logo.png"] if p.exists()),None)
-if logo_path:
-    c1,c2=st.columns([0.7,5.3],vertical_alignment="center")
-    with c1: st.image(str(logo_path),width=84)
-    with c2:
-        st.markdown('<div class="main-header">Motech Miami — Price List Manager</div>',unsafe_allow_html=True)
-        st.markdown('<div class="sub-header">Panel interno · Operación diaria y publicación</div>',unsafe_allow_html=True)
-else:
-    st.markdown('<div class="main-header">Motech Miami — Price List Manager</div>',unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Panel interno · Operación diaria y publicación</div>',unsafe_allow_html=True)
-
-master=load_supplier_master()
-with st.sidebar:
-    st.header("Carga diaria")
-    uploaded_files=st.file_uploader("Subir listas Excel de proveedores",type=["xlsx","xls"],accept_multiple_files=True)
-    if master.empty: st.warning("No se encontró supplier_master.xlsx.")
-    else: st.success(f"Maestro de proveedores cargado: {len(master)} registros")
-    st.caption("In Transit no se utiliza como stock disponible.")
-    st.divider()
-    st.caption("MVP 5 · Panel interno + Price List pública protegida.")
-
-if not uploaded_files:
-    page=st.radio("Sección",["Cargar proveedores","Agregar producto manual","Configuración"],horizontal=True,label_visibility="collapsed")
-    if page=="Cargar proveedores":
-        st.info("Sube las listas de proveedores para comenzar la actualización diaria.")
-    elif page=="Agregar producto manual":
-        st.subheader("Agregar producto manual")
-        render_manual_form("manual_empty")
-        existing=load_manual_products()
-        if existing:
-            st.markdown("#### Productos manuales activos")
-            st.dataframe(pd.DataFrame(existing)[["id","base_item","description","stock","cost","moq","eta"]],use_container_width=True,hide_index=True,
-                         column_config={"cost":st.column_config.NumberColumn(format="$%.2f")})
-    else:
-        st.subheader("Configuración")
-        st.markdown("#### Contraseña de clientes")
-        st.caption("La vista pública muestra productos sin contraseña; únicamente los precios están protegidos.")
-        p1=st.text_input("Nueva contraseña",type="password",key="cfg_pwd_1")
-        p2=st.text_input("Confirmar contraseña",type="password",key="cfg_pwd_2")
-        if st.button("Cambiar contraseña de clientes",type="primary"):
-            if p1!=p2: st.error("Las contraseñas no coinciden.")
-            elif len(p1)<4: st.error("La contraseña debe tener al menos 4 caracteres.")
-            else:
-                v=set_client_password(p1); st.success(f"Contraseña actualizada. Versión de acceso: {v}.")
-        st.info("Vista pública: agrega ?mode=public al final de la URL de esta aplicación.")
-    st.stop()
-
-frames=[]; logs=[]
-for f in uploaded_files:
-    d,info=parse_uploaded(f)
-    if d.empty:
-        info["Estado"]="⚠️ Verificar archivo Excel"
-        if not info.get("Detalle"): info["Detalle"]="No se importaron productos de este archivo."
-    else:
-        frames.append(d)
-    logs.append(info)
-manual_df=manual_products_frame()
-if not manual_df.empty: frames.append(manual_df)
-
-log_df=pd.DataFrame(logs)
-if not frames:
-    st.error("No hay productos válidos para procesar.")
-    st.dataframe(log_df,use_container_width=True,hide_index=True)
-    st.stop()
-
-df_all=pd.concat(frames,ignore_index=True,sort=False)
-offers=prepare_offers(df_all,master)
-overrides=load_overrides()
-winners,alternatives=select_winners(offers,overrides)
-issues=build_review_issues(offers,winners,log_df)
-
-valid_files=int((log_df["Productos"]>0).sum()) if not log_df.empty else 0
-review_count=len(issues)
-manual_price_count=int(winners["Precio_Manual"].sum()) if not winners.empty else 0
-manual_products_count=len(load_manual_products())
-last_pub=latest_publication_run()
-last_pub_label=last_pub["published_at"].replace("T"," ") if last_pub else "Nunca"
-st.markdown(
-    f'<div class="kpi-strip">'
-    f'<div class="kpi-box"><div class="kpi-value">{valid_files}</div><div class="kpi-label">Archivos válidos</div></div>'
-    f'<div class="kpi-box"><div class="kpi-value">{len(winners):,}</div><div class="kpi-label">Productos seleccionados</div></div>'
-    f'<div class="kpi-box"><div class="kpi-value">{review_count}</div><div class="kpi-label">Revisión requerida</div></div>'
-    f'<div class="kpi-box"><div class="kpi-value">{manual_products_count}</div><div class="kpi-label">Productos manuales</div></div>'
-    f'</div>', unsafe_allow_html=True)
-
-page=st.radio("Sección",["Productos","Revisión requerida","Resumen y publicación","Agregar producto manual","Resultado de importación","Configuración"],horizontal=True,label_visibility="collapsed")
-
-if page=="Configuración":
-    st.subheader("Configuración")
-    st.markdown("#### Contraseña de clientes")
-    status="Configurada" if client_password_is_configured() else "No configurada"
-    st.write(f"**Estado:** {status} · **Versión:** {client_password_version()}")
-    p1=st.text_input("Nueva contraseña",type="password",key="cfg2_pwd_1")
-    p2=st.text_input("Confirmar contraseña",type="password",key="cfg2_pwd_2")
-    if st.button("Cambiar contraseña de clientes",type="primary"):
-        if p1!=p2: st.error("Las contraseñas no coinciden.")
-        elif len(p1)<4: st.error("La contraseña debe tener al menos 4 caracteres.")
-        else:
-            v=set_client_password(p1); st.session_state.pop("public_price_version",None)
-            st.success(f"Contraseña actualizada. Los accesos anteriores quedan invalidados. Nueva versión: {v}.")
-    st.divider(); st.markdown("#### Vista pública")
-    st.code("?mode=public",language=None)
-    st.caption("Añade ese parámetro a la URL de Streamlit para abrir directamente la Price List pública en inglés.")
-    st.stop()
-
-if page=="Resultado de importación":
-    st.subheader("Resultado de importación")
-    st.dataframe(log_df,use_container_width=True,hide_index=True)
-    st.stop()
-
-if page=="Resumen y publicación":
-    st.subheader("Resumen antes de publicar")
-    latest=latest_publication_items()
-    prev_keys=set(latest["product_key"].astype(str)) if not latest.empty else set()
-    curr_visible=winners[~winners["Oculto"]].copy() if not winners.empty else winners.copy()
-    curr_keys=set(curr_visible["PRODUCT_KEY"].astype(str)) if not curr_visible.empty else set()
-    new_count=len(curr_keys-prev_keys)
-    removed_count=len(prev_keys-curr_keys)
-    price_changes=0; supplier_changes=0
-    if not latest.empty and not curr_visible.empty:
-        prev_map={r["product_key"]:r for _,r in latest.iterrows()}
-        for _,r in curr_visible.iterrows():
-            p=prev_map.get(r["PRODUCT_KEY"])
-            if p is None: continue
-            if pd.notna(r.get("Precio_Publicado")) and pd.notna(p.get("published_price")) and abs(float(r["Precio_Publicado"])-float(p["published_price"]))>0.005: price_changes+=1
-            if safe_text(r.get("Proveedor"))!=safe_text(p.get("supplier")): supplier_changes+=1
-    c1,c2,c3,c4=st.columns(4)
-    c1.metric("Productos nuevos",new_count)
-    c2.metric("Productos retirados",removed_count)
-    c3.metric("Cambios de precio",price_changes)
-    c4.metric("Cambios de proveedor",supplier_changes)
-    c5,c6,c7,c8=st.columns(4)
-    c5.metric("HOT DEALS",int(curr_visible["HOT_DEAL"].fillna(False).sum()) if "HOT_DEAL" in curr_visible else 0)
-    c6.metric("NEW ARRIVALS",int(curr_visible["NEW_ARRIVAL"].fillna(False).sum()) if "NEW_ARRIVAL" in curr_visible else 0)
-    c7.metric("LOW STOCK",int(curr_visible["LOW_STOCK"].fillna(False).sum()) if "LOW_STOCK" in curr_visible else 0)
-    c8.metric("Revisión requerida",len(issues))
-    st.caption(f"Última publicación: {last_pub_label}")
-    if len(issues)>0:
-        st.warning("Hay incidencias pendientes. Revísalas antes de publicar la actualización.")
-    else:
-        st.success("No hay incidencias pendientes de revisión.")
-    preview_cols=["ITEM_PUBLICO","Descripcion","Proveedor","Stock_Publico","Costo","Precio_Publicado","HOT_DEAL","NEW_ARRIVAL","LOW_STOCK"]
-    preview=curr_visible[[c for c in preview_cols if c in curr_visible.columns]].copy()
-    st.dataframe(preview.head(250),use_container_width=True,hide_index=True,column_config={"Costo":st.column_config.NumberColumn(format="$%.2f"),"Precio_Publicado":st.column_config.NumberColumn(format="$%.2f")})
-    confirm=st.checkbox("Confirmo que revisé el resumen y deseo reemplazar la versión pública actual.")
-    disabled=(len(issues)>0) or (not confirm)
-    if st.button("PUBLICAR ACTUALIZACIÓN",type="primary",use_container_width=True,disabled=disabled):
-        run_id,ts=publish_snapshot(curr_visible)
-        st.success(f"Actualización publicada correctamente. Versión #{run_id} · {ts.replace('T',' ')}")
-        st.rerun()
-    st.stop()
-
-if page=="Agregar producto manual":
-    st.subheader("Agregar producto manual")
-    render_manual_form("manual_main",offers)
-    existing=load_manual_products()
-    if existing:
-        st.markdown("#### Productos manuales activos")
-        md=pd.DataFrame(existing)
-        st.dataframe(md[["id","base_item","supplier_name","description","stock","cost","moq","eta"]],use_container_width=True,hide_index=True,
-                     column_config={"cost":st.column_config.NumberColumn(format="$%.2f")})
-        choices=[""]+[f'{x["id"]} — {x["base_item"]} — {x["description"][:65]}' for x in existing]
-        selected=st.selectbox("Desactivar producto manual",choices)
-        if selected and st.button("Desactivar seleccionado"):
-            deactivate_manual_product(int(selected.split(" — ",1)[0])); st.rerun()
-    st.stop()
-
-if page=="Revisión requerida":
-    st.subheader("Revisión requerida")
-    if issues.empty:
-        st.success("No hay incidencias pendientes de revisión.")
-        st.stop()
-    st.dataframe(issues[["Tipo","Producto","Proveedor","Motivo","Detalle"]],use_container_width=True,hide_index=True)
-    opts={f'{r["Tipo"]} · {r["Producto"]} · {r["Motivo"]}':r["ISSUE_KEY"] for _,r in issues.iterrows()}
-    label=st.selectbox("Incidencia",list(opts.keys())); ik=opts[label]
-    note=st.text_input("Nota interna")
-    c1,c2=st.columns(2)
-    with c1:
-        if st.button("Marcar como revisado",type="primary",use_container_width=True):
-            save_review_action(ik,"APROBADO",note); st.rerun()
-    with c2:
-        if st.button("Ignorar esta incidencia",use_container_width=True):
-            save_review_action(ik,"IGNORADO",note); st.rerun()
-    st.stop()
-
-st.subheader("Productos seleccionados")
-if winners.empty:
-    st.warning("No hay productos elegibles."); st.stop()
-search=st.text_input("Buscar",placeholder="ITEM, modelo, descripción, procesador, RAM...")
-f1,f2,f3,f4=st.columns(4)
-with f1: cat=st.selectbox("Categoría",["TODAS"]+sorted(x for x in winners["Categoria"].dropna().unique().tolist() if x))
-with f2: prov=st.selectbox("Proveedor seleccionado",["TODOS"]+sorted(winners["Proveedor"].dropna().unique().tolist()))
-with f3: cond=st.selectbox("Condición",["TODAS"]+sorted(winners["Condicion_Normalizada"].dropna().unique().tolist()))
-with f4: vis=st.selectbox("Visibilidad",["TODOS","VISIBLES","OCULTOS"])
-view=winners.copy()
-if cat!="TODAS": view=view[view["Categoria"]==cat]
-if prov!="TODOS": view=view[view["Proveedor"]==prov]
-if cond!="TODAS": view=view[view["Condicion_Normalizada"]==cond]
-if vis=="VISIBLES": view=view[~view["Oculto"]]
-elif vis=="OCULTOS": view=view[view["Oculto"]]
-if search.strip():
-    q=search.strip().upper()
-    hay=(view["ITEM_PUBLICO"].astype(str)+" "+view["Descripcion"].astype(str)+" "+view["Procesador"].astype(str)+" "+view["RAM"].astype(str)+" "+view["Almacenamiento"].astype(str)).str.upper()
-    view=view[hay.str.contains(re.escape(q),na=False)]
-show=view[["Oculto","Categoria","ITEM_PUBLICO","Descripcion","Proveedor","Stock_Real","Stock_Publico","Costo","Costo_Anterior","Variacion_Costo_Pct","Margen_Pct","Precio_Sugerido","Precio_Publicado","Precio_Manual","HOT_DEAL","NEW_ARRIVAL","LOW_STOCK","MOQ_Final","ETA_Final","Alternativas"]].copy()
-show.columns=["Oculto","Categoría","ITEM","Descripción","Proveedor elegido","Stock real","Stock público","Costo","Costo anterior","Variación costo %","Margen %","Precio sugerido","Precio publicado","Manual","HOT DEAL","NEW ARRIVAL","LOW STOCK","MOQ","ETA","Otros proveedores"]
-st.dataframe(show,use_container_width=True,hide_index=True,column_config={
-    "Costo":st.column_config.NumberColumn(format="$%.2f"),"Precio sugerido":st.column_config.NumberColumn(format="$%.2f"),
-    "Precio publicado":st.column_config.NumberColumn(format="$%.2f"),"Costo anterior":st.column_config.NumberColumn(format="$%.2f"),
-    "Variación costo %":st.column_config.NumberColumn(format="%.1f%%"),"Margen %":st.column_config.NumberColumn(format="%.2f%%")})
-
-st.divider(); st.markdown("### Ajustar producto")
-labels={f'{r["ITEM_PUBLICO"]} — {safe_text(r["Descripcion"])[:82]}':r["PRODUCT_KEY"] for _,r in view.iterrows()}
-if not labels: st.stop()
-sl=st.selectbox("Producto",list(labels.keys())); key=labels[sl]
-row=winners[winners["PRODUCT_KEY"]==key].iloc[0]; opts=alternatives.get(key,pd.DataFrame()).copy(); ov=load_overrides().get(key,{})
-left,right=st.columns([1.15,1])
-with left:
-    st.markdown("#### Oferta seleccionada")
-    st.write(f'**ITEM:** {row["ITEM_PUBLICO"]}')
-    st.write(f'**Proveedor:** {row["Proveedor"]}')
-    st.write(f'**Stock real:** {int(row["Stock_Real"])} · **Stock público:** {row["Stock_Publico"]}')
-    st.write(f'**Costo:** ${float(row["Costo"]):,.2f} · **MOQ:** {row["MOQ_Final"]} · **ETA:** {row["ETA_Final"]}')
-    badges=[]
-    if bool(row.get("HOT_DEAL",False)): badges.append("🔥 HOT DEAL")
-    if bool(row.get("NEW_ARRIVAL",False)): badges.append("🆕 NEW ARRIVAL")
-    if bool(row.get("LOW_STOCK",False)): badges.append("⚠️ LOW STOCK")
-    if badges: st.info(" · ".join(badges))
-    if pd.notna(row.get("Variacion_Costo_Pct")): st.caption(f'Cambio de costo vs. última publicación: {float(row["Variacion_Costo_Pct"]):+.1f}%')
-    st.caption(safe_text(row["Descripcion"]))
-    if len(opts)>1:
-        alt=opts.copy(); alt["Seleccionado"]=[True]+[False]*(len(alt)-1)
-        av=alt[["Seleccionado","Proveedor","ITEM_PUBLICO","Stock_Real","Costo","MOQ_Final","ETA_Final"]].copy()
-        av.columns=["Seleccionado","Proveedor","ITEM","Stock","Costo","MOQ","ETA"]
-        st.dataframe(av,use_container_width=True,hide_index=True,column_config={"Costo":st.column_config.NumberColumn(format="$%.2f")})
-        first=opts.iloc[0]
-        if (opts.iloc[1:]["Stock_Real"]>=2*first["Stock_Real"]).any(): st.info("Alternativa con mayor stock disponible.")
-with right:
+_ui_old = '''with right:
     st.markdown("#### Precio y visibilidad")
     margin_current=ov.get("manual_margin")
     if margin_current is None: margin_current=default_margin_pct(row.get("Categoria"),row.get("Costo"))
@@ -1812,5 +681,99 @@ with right:
         manual_price=float(pub) if abs(float(pub)-float(suggested))>0.005 else None
         save_override(key,manual_price,float(margin),hidden,cat_override.strip() or None,sub_override.strip() or None)
         st.success("Cambios guardados."); st.rerun()
+'''
+_ui_new = '''with right:
+    st.markdown("#### Costo, precio y visibilidad")
+    provider_cost=float(row.get("Costo_Proveedor") if pd.notna(row.get("Costo_Proveedor")) else row.get("Costo"))
+    current_cost=float(ov.get("manual_cost") if ov.get("manual_cost") is not None else provider_cost)
+    cost_edit=st.number_input("Costo",min_value=0.01,value=current_cost,step=1.0,format="%.2f",key=f"m3cost_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    if ov.get("manual_cost") is not None:
+        st.caption(f"Costo proveedor: USD {provider_cost:,.2f} · Costo manual activo")
+    else:
+        st.caption(f"Costo proveedor: USD {provider_cost:,.2f}")
 
-st.caption("SQLite mantiene ajustes e historial durante la vida del contenedor. En Streamlit Community Cloud todavía migraremos la persistencia a una base externa antes de producción.")
+    margin_current=ov.get("manual_margin")
+    if margin_current is None: margin_current=default_margin_pct(row.get("Categoria"),cost_edit)
+    margin=st.number_input("Margen %",min_value=0.0,max_value=100.0,value=float(margin_current or 0),step=0.5,key=f"m3m_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    suggested=float(cost_edit)*(1+margin/100); st.metric("Precio sugerido",f"USD {suggested:,.2f}")
+    pub=st.number_input("Precio publicado",min_value=0.01,value=float(ov.get("manual_price") if ov.get("manual_price") is not None else suggested),step=1.0,format="%.2f",key=f"m3p_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    hidden=st.checkbox("Ocultar este producto de la lista pública",value=bool(ov.get("hidden",0)),key=f"m3h_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    cat_override=st.text_input("Categoría manual (opcional)",value=safe_text(ov.get("category_override")),key=f"m3c_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    sub_override=st.text_input("Subcategoría manual (opcional)",value=safe_text(ov.get("subcategory_override")),key=f"m3s_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    if st.button("Guardar cambios",type="primary",use_container_width=True):
+        manual_cost=float(cost_edit) if abs(float(cost_edit)-float(provider_cost))>0.005 else None
+        manual_price=float(pub) if abs(float(pub)-float(suggested))>0.005 else None
+        save_override(key,manual_price,float(margin),hidden,cat_override.strip() or None,sub_override.strip() or None,manual_cost=manual_cost)
+        st.success("Cambios guardados."); st.rerun()
+'''
+if _ui_old not in source:
+    raise RuntimeError("product edit UI target not found.")
+source=source.replace(_ui_old,_ui_new,1)
+
+
+# Finalize approved margin policy migration and manual override behavior.
+_margin_load_old = '''            if isinstance(data,list):
+                return data
+'''
+_margin_load_new = '''            if isinstance(data,list):
+                configured_non_core=[]
+                for r in data:
+                    cat=safe_text(r.get("Categoria")).upper().strip()
+                    pct=r.get("Margen_Pct")
+                    if cat not in {"LAPTOPS","LAPTOP","NOTEBOOKS","DESKTOPS","DESKTOPS & PC","DESKTOP"} and pd.notna(pct):
+                        configured_non_core.append(r)
+                if configured_non_core:
+                    return data
+                # Legacy configuration only had computers. Adopt the approved
+                # Motech matrix until the operator saves a customized table.
+'''
+if _margin_load_old not in source:
+    raise RuntimeError("Margin migration target not found.")
+source=source.replace(_margin_load_old,_margin_load_new,1)
+
+_margin_save_old = '''        manual_cost=float(cost_edit) if abs(float(cost_edit)-float(provider_cost))>0.005 else None
+        manual_price=float(pub) if abs(float(pub)-float(suggested))>0.005 else None
+        save_override(key,manual_price,float(margin),hidden,cat_override.strip() or None,sub_override.strip() or None,manual_cost=manual_cost)
+'''
+_margin_save_new = '''        manual_cost=float(cost_edit) if abs(float(cost_edit)-float(provider_cost))>0.005 else None
+        automatic_margin=default_margin_pct(row.get("Categoria"),cost_edit)
+        manual_margin=float(margin) if (automatic_margin is None or abs(float(margin)-float(automatic_margin))>0.0001) else None
+        manual_price=float(pub) if abs(float(pub)-float(suggested))>0.005 else None
+        save_override(key,manual_price,manual_margin,hidden,cat_override.strip() or None,sub_override.strip() or None,manual_cost=manual_cost)
+'''
+if _margin_save_old not in source:
+    raise RuntimeError("Manual margin save target not found.")
+source=source.replace(_margin_save_old,_margin_save_new,1)
+
+_cost_caption_old = '''    if ov.get("manual_cost") is not None:
+        st.caption(f"Costo proveedor: USD {provider_cost:,.2f} · Costo manual activo")
+    else:
+        st.caption(f"Costo proveedor: USD {provider_cost:,.2f}")
+
+    margin_current=ov.get("manual_margin")
+'''
+_cost_caption_new = '''    if ov.get("manual_cost") is not None:
+        st.caption(f"Costo proveedor: USD {provider_cost:,.2f} · Costo manual activo")
+        if st.button("Restaurar costo del proveedor",key=f"m3resetcost_{hashlib.md5(key.encode()).hexdigest()[:8]}"):
+            save_override(
+                key,
+                ov.get("manual_price"),
+                ov.get("manual_margin"),
+                bool(ov.get("hidden",0)),
+                ov.get("category_override"),
+                ov.get("subcategory_override"),
+                manual_cost=None,
+            )
+            st.session_state.pop(f"m3cost_{hashlib.md5(key.encode()).hexdigest()[:8]}",None)
+            st.success("Costo del proveedor restaurado.")
+            st.rerun()
+    else:
+        st.caption(f"Costo proveedor: USD {provider_cost:,.2f}")
+
+    margin_current=ov.get("manual_margin")
+'''
+if _cost_caption_old not in source:
+    raise RuntimeError("Manual cost reset target not found.")
+source=source.replace(_cost_caption_old,_cost_caption_new,1)
+
+exec(compile(source, "Motech_Price_List_Manager.py", "exec"), globals(), globals())

@@ -1,0 +1,44 @@
+name: Validate Price List Manager
+
+on:
+  push:
+    branches: [development, main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Verify embedded application and compile
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import ast, base64, hashlib, lzma
+
+          app_text = Path("app.py").read_text(encoding="utf-8")
+          compile(app_text, "app.py", "exec")
+
+          tree = ast.parse(app_text)
+          payload = None
+          for node in tree.body:
+              if isinstance(node, ast.Assign):
+                  for target in node.targets:
+                      if isinstance(target, ast.Name) and target.id == "PAYLOAD":
+                          payload = ast.literal_eval(node.value)
+                          break
+          assert payload, "PAYLOAD not found"
+
+          source = lzma.decompress(base64.b64decode(payload)).decode("utf-8")
+          expected = "836399f50ac828bd7f529ec3bc192b7df38e265490bab3ed2d51fa027f883172"
+          actual = hashlib.sha256(source.encode("utf-8")).hexdigest()
+          assert actual == expected, (actual, expected)
+          compile(source, "Motech_Price_List_Manager.py", "exec")
+          print("Validation OK")
+          PY
