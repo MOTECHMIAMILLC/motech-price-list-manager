@@ -537,4 +537,177 @@ if _v2_anchor not in source:
     raise RuntimeError("Classifier V2 insertion target not found.")
 source=source.replace(_v2_anchor,_v2_code,1)
 
+
+# Approved margin matrix + per-product manual cost override.
+_margin_matrix_old = '''    return [
+        {"Categoria":"LAPTOPS","Costo_Min":0.0,"Costo_Max":999999.0,"Margen_Pct":2.0},
+        {"Categoria":"DESKTOPS & PC","Costo_Min":0.0,"Costo_Max":999999.0,"Margen_Pct":2.0},
+    ]
+'''
+_margin_matrix_new = '''    return [
+        {"Categoria":"LAPTOPS","Costo_Min":0.0,"Costo_Max":999999.0,"Margen_Pct":2.0},
+        {"Categoria":"DESKTOPS","Costo_Min":0.0,"Costo_Max":999999.0,"Margen_Pct":2.0},
+        {"Categoria":"MONITORS","Costo_Min":0.0,"Costo_Max":100.0,"Margen_Pct":10.0},
+        {"Categoria":"MONITORS","Costo_Min":100.01,"Costo_Max":300.0,"Margen_Pct":7.0},
+        {"Categoria":"MONITORS","Costo_Min":300.01,"Costo_Max":999999.0,"Margen_Pct":6.0},
+        {"Categoria":"GAMING","Costo_Min":0.0,"Costo_Max":100.0,"Margen_Pct":10.0},
+        {"Categoria":"GAMING","Costo_Min":100.01,"Costo_Max":300.0,"Margen_Pct":7.0},
+        {"Categoria":"GAMING","Costo_Min":300.01,"Costo_Max":999999.0,"Margen_Pct":6.0},
+        {"Categoria":"MULTIMEDIA","Costo_Min":0.0,"Costo_Max":100.0,"Margen_Pct":10.0},
+        {"Categoria":"MULTIMEDIA","Costo_Min":100.01,"Costo_Max":300.0,"Margen_Pct":7.0},
+        {"Categoria":"MULTIMEDIA","Costo_Min":300.01,"Costo_Max":999999.0,"Margen_Pct":6.0},
+        {"Categoria":"STORAGE","Costo_Min":0.0,"Costo_Max":100.0,"Margen_Pct":10.0},
+        {"Categoria":"STORAGE","Costo_Min":100.01,"Costo_Max":300.0,"Margen_Pct":7.0},
+        {"Categoria":"STORAGE","Costo_Min":300.01,"Costo_Max":999999.0,"Margen_Pct":6.0},
+        {"Categoria":"NETWORKING","Costo_Min":0.0,"Costo_Max":100.0,"Margen_Pct":10.0},
+        {"Categoria":"NETWORKING","Costo_Min":100.01,"Costo_Max":300.0,"Margen_Pct":7.0},
+        {"Categoria":"NETWORKING","Costo_Min":300.01,"Costo_Max":999999.0,"Margen_Pct":6.0},
+        {"Categoria":"ACCESSORIES & OTHERS","Costo_Min":0.0,"Costo_Max":100.0,"Margen_Pct":10.0},
+        {"Categoria":"ACCESSORIES & OTHERS","Costo_Min":100.01,"Costo_Max":300.0,"Margen_Pct":7.0},
+        {"Categoria":"ACCESSORIES & OTHERS","Costo_Min":300.01,"Costo_Max":999999.0,"Margen_Pct":6.0},
+        {"Categoria":"REFURBISHED","Costo_Min":0.0,"Costo_Max":100.0,"Margen_Pct":10.0},
+        {"Categoria":"REFURBISHED","Costo_Min":100.01,"Costo_Max":300.0,"Margen_Pct":7.0},
+        {"Categoria":"REFURBISHED","Costo_Min":300.01,"Costo_Max":999999.0,"Margen_Pct":6.0},
+    ]
+'''
+if _margin_matrix_old not in source:
+    raise RuntimeError("Margin default matrix target not found.")
+source=source.replace(_margin_matrix_old,_margin_matrix_new,1)
+
+_db_old = '''        conn.execute("""CREATE TABLE IF NOT EXISTS product_overrides (
+            product_key TEXT PRIMARY KEY,
+            manual_price REAL,
+            manual_margin REAL,
+            hidden INTEGER NOT NULL DEFAULT 0,
+            category_override TEXT,
+            subcategory_override TEXT,
+            updated_at TEXT NOT NULL
+        )""")
+'''
+_db_new = '''        conn.execute("""CREATE TABLE IF NOT EXISTS product_overrides (
+            product_key TEXT PRIMARY KEY,
+            manual_price REAL,
+            manual_margin REAL,
+            manual_cost REAL,
+            hidden INTEGER NOT NULL DEFAULT 0,
+            category_override TEXT,
+            subcategory_override TEXT,
+            updated_at TEXT NOT NULL
+        )""")
+        cols={r["name"] for r in conn.execute("PRAGMA table_info(product_overrides)").fetchall()}
+        if "manual_cost" not in cols:
+            conn.execute("ALTER TABLE product_overrides ADD COLUMN manual_cost REAL")
+'''
+if _db_old not in source:
+    raise RuntimeError("product_overrides schema target not found.")
+source=source.replace(_db_old,_db_new,1)
+
+_save_old = '''def save_override(product_key, manual_price, manual_margin, hidden, category_override=None, subcategory_override=None):
+    with db_conn() as conn:
+        conn.execute("""INSERT INTO product_overrides
+            (product_key,manual_price,manual_margin,hidden,category_override,subcategory_override,updated_at)
+            VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(product_key) DO UPDATE SET
+                manual_price=excluded.manual_price,
+                manual_margin=excluded.manual_margin,
+                hidden=excluded.hidden,
+                category_override=excluded.category_override,
+                subcategory_override=excluded.subcategory_override,
+                updated_at=excluded.updated_at
+        """, (product_key, manual_price, manual_margin, int(bool(hidden)), category_override, subcategory_override, now_iso()))
+        conn.commit()
+'''
+_save_new = '''def save_override(product_key, manual_price, manual_margin, hidden, category_override=None, subcategory_override=None, manual_cost=None):
+    with db_conn() as conn:
+        conn.execute("""INSERT INTO product_overrides
+            (product_key,manual_price,manual_margin,manual_cost,hidden,category_override,subcategory_override,updated_at)
+            VALUES (?,?,?,?,?,?,?,?)
+            ON CONFLICT(product_key) DO UPDATE SET
+                manual_price=excluded.manual_price,
+                manual_margin=excluded.manual_margin,
+                manual_cost=excluded.manual_cost,
+                hidden=excluded.hidden,
+                category_override=excluded.category_override,
+                subcategory_override=excluded.subcategory_override,
+                updated_at=excluded.updated_at
+        """, (product_key, manual_price, manual_margin, manual_cost, int(bool(hidden)), category_override, subcategory_override, now_iso()))
+        conn.commit()
+'''
+if _save_old not in source:
+    raise RuntimeError("save_override target not found.")
+source=source.replace(_save_old,_save_new,1)
+
+_win_old = '''        ov=overrides.get(key,{})
+        margin=ov.get("manual_margin")
+'''
+_win_new = '''        ov=overrides.get(key,{})
+        w["Costo_Proveedor"]=w.get("Costo")
+        manual_cost=ov.get("manual_cost")
+        if manual_cost is not None:
+            w["Costo"]=float(manual_cost)
+        w["Costo_Manual"]=manual_cost is not None
+        margin=ov.get("manual_margin")
+'''
+if _win_old not in source:
+    raise RuntimeError("winner manual cost target not found.")
+source=source.replace(_win_old,_win_new,1)
+
+_low_old = '''            ov=overrides.get(key,{})
+            margin=ov.get("manual_margin")
+'''
+_low_new = '''            ov=overrides.get(key,{})
+            c["Costo_Proveedor"]=c.get("Costo")
+            manual_cost=ov.get("manual_cost")
+            if manual_cost is not None:
+                c["Costo"]=float(manual_cost)
+            c["Costo_Manual"]=manual_cost is not None
+            margin=ov.get("manual_margin")
+'''
+if _low_old not in source:
+    raise RuntimeError("low stock manual cost target not found.")
+source=source.replace(_low_old,_low_new,1)
+
+_ui_old = '''with right:
+    st.markdown("#### Precio y visibilidad")
+    margin_current=ov.get("manual_margin")
+    if margin_current is None: margin_current=default_margin_pct(row.get("Categoria"),row.get("Costo"))
+    margin=st.number_input("Margen %",min_value=0.0,max_value=100.0,value=float(margin_current or 0),step=0.5,key=f"m3m_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    suggested=float(row["Costo"])*(1+margin/100); st.metric("Precio sugerido",f"${suggested:,.2f}")
+    pub=st.number_input("Precio publicado",min_value=0.01,value=float(ov.get("manual_price") if ov.get("manual_price") is not None else suggested),step=1.0,format="%.2f",key=f"m3p_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    hidden=st.checkbox("Ocultar este producto de la lista pública",value=bool(ov.get("hidden",0)),key=f"m3h_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    cat_override=st.text_input("Categoría manual (opcional)",value=safe_text(ov.get("category_override")),key=f"m3c_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    sub_override=st.text_input("Subcategoría manual (opcional)",value=safe_text(ov.get("subcategory_override")),key=f"m3s_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    if st.button("Guardar cambios",type="primary",use_container_width=True):
+        manual_price=float(pub) if abs(float(pub)-float(suggested))>0.005 else None
+        save_override(key,manual_price,float(margin),hidden,cat_override.strip() or None,sub_override.strip() or None)
+        st.success("Cambios guardados."); st.rerun()
+'''
+_ui_new = '''with right:
+    st.markdown("#### Costo, precio y visibilidad")
+    provider_cost=float(row.get("Costo_Proveedor") if pd.notna(row.get("Costo_Proveedor")) else row.get("Costo"))
+    current_cost=float(ov.get("manual_cost") if ov.get("manual_cost") is not None else provider_cost)
+    cost_edit=st.number_input("Costo",min_value=0.01,value=current_cost,step=1.0,format="%.2f",key=f"m3cost_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    if ov.get("manual_cost") is not None:
+        st.caption(f"Costo proveedor: USD {provider_cost:,.2f} · Costo manual activo")
+    else:
+        st.caption(f"Costo proveedor: USD {provider_cost:,.2f}")
+
+    margin_current=ov.get("manual_margin")
+    if margin_current is None: margin_current=default_margin_pct(row.get("Categoria"),cost_edit)
+    margin=st.number_input("Margen %",min_value=0.0,max_value=100.0,value=float(margin_current or 0),step=0.5,key=f"m3m_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    suggested=float(cost_edit)*(1+margin/100); st.metric("Precio sugerido",f"USD {suggested:,.2f}")
+    pub=st.number_input("Precio publicado",min_value=0.01,value=float(ov.get("manual_price") if ov.get("manual_price") is not None else suggested),step=1.0,format="%.2f",key=f"m3p_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    hidden=st.checkbox("Ocultar este producto de la lista pública",value=bool(ov.get("hidden",0)),key=f"m3h_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    cat_override=st.text_input("Categoría manual (opcional)",value=safe_text(ov.get("category_override")),key=f"m3c_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    sub_override=st.text_input("Subcategoría manual (opcional)",value=safe_text(ov.get("subcategory_override")),key=f"m3s_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+    if st.button("Guardar cambios",type="primary",use_container_width=True):
+        manual_cost=float(cost_edit) if abs(float(cost_edit)-float(provider_cost))>0.005 else None
+        manual_price=float(pub) if abs(float(pub)-float(suggested))>0.005 else None
+        save_override(key,manual_price,float(margin),hidden,cat_override.strip() or None,sub_override.strip() or None,manual_cost=manual_cost)
+        st.success("Cambios guardados."); st.rerun()
+'''
+if _ui_old not in source:
+    raise RuntimeError("product edit UI target not found.")
+source=source.replace(_ui_old,_ui_new,1)
+
 exec(compile(source, "Motech_Price_List_Manager.py", "exec"), globals(), globals())
