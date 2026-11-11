@@ -230,4 +230,33 @@ if _cfg_main_old not in source:
     raise RuntimeError("Main configuration target not found.")
 source=source.replace(_cfg_main_old,_cfg_main_new,1)
 
+
+# Category classification priority fixes for obvious non-PC products.
+_category_old = '''    desktop_keys = [
+'''
+_category_new = '''    # High-priority categories that can contain ambiguous words such as
+    # "all-in-one" but are not desktop computers.
+    printer_keys = [
+        "PRINTER", "INKJET", "LASERJET", "LASER PRINTER", "MULTIFUNCTION PRINTER",
+        "PHOTO PRINTER", "LABEL PRINTER", "OFFICEJET", "DESKJET", "ECOTANK",
+        "MAXIFY", "PIXMA", "IMAGECLASS", "BROTHER MFC", "BROTHER HL",
+    ]
+    if any(k in text for k in printer_keys):
+        return "🔌 Accessories & Others"
+
+    networking_keys = [
+        "STARLINK", "ROUTER", "MESH WIFI", "MESH WI-FI", "WI-FI SYSTEM",
+        "WIFI SYSTEM", "ACCESS POINT", "WIRELESS ACCESS POINT", "ETHERNET SWITCH",
+        "NETWORK SWITCH", "GIGABIT SWITCH", "MODEM", "FIREWALL", "GATEWAY",
+        "Ubiquiti", "UNIFI", "TP-LINK OMADA",
+    ]
+    if any(k.upper() in text for k in networking_keys):
+        return "🌐 Networking"
+
+    desktop_keys = [
+'''
+if _category_old not in source:
+    raise RuntimeError("Category desktop target not found.")
+source=source.replace(_category_old,_category_new,1)
+
 exec(compile(source, "Motech_Price_List_Manager.py", "exec"), globals(), globals())
