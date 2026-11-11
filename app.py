@@ -153,6 +153,22 @@ def render_margin_config(prefix="margin_cfg"):
     st.markdown("#### Reglas de margen")
     st.caption("Define márgenes automáticos por categoría y rango de costo. El precio o margen manual de un producto siempre tiene prioridad.")
     rules=load_margin_rules()
+    normalized_rules=[]
+    seen_rule_keys=set()
+    for r in rules:
+        rr=dict(r)
+        rr["Categoria"]=normalize_category_name(rr.get("Categoria"))
+        key=(
+            rr["Categoria"],
+            float(rr.get("Costo_Min",0) or 0),
+            float(rr.get("Costo_Max",999999) or 999999),
+        )
+        if key in seen_rule_keys:
+            # Prefer the first configured rule and drop alias duplicates.
+            continue
+        seen_rule_keys.add(key)
+        normalized_rules.append(rr)
+    rules=normalized_rules
 
     canonical_categories=[
         "LAPTOPS","DESKTOPS","MONITORS","GAMING","MULTIMEDIA",
@@ -174,12 +190,11 @@ def render_margin_config(prefix="margin_cfg"):
     coverage_rows=[]
     for cat in canonical_categories:
         configured=any(
-            (safe_text(r.get("Categoria")).upper().strip() in {"*","TODAS","TODOS","ALL"}) or
-            (safe_text(r.get("Categoria")).upper().strip()==cat) or
-            (safe_text(r.get("Categoria")).upper().strip() and (
-                safe_text(r.get("Categoria")).upper().strip() in cat or
-                cat in safe_text(r.get("Categoria")).upper().strip()
-            ))
+            (
+                (safe_text(r.get("Categoria")).upper().strip() in {"*","TODAS","TODOS","ALL"}) or
+                (normalize_category_name(r.get("Categoria"))==cat)
+            )
+            and pd.notna(r.get("Margen_Pct"))
             for r in rules
         )
         total=0
@@ -224,6 +239,7 @@ def render_margin_config(prefix="margin_cfg"):
             cat=safe_text(row.get("Categoria")).strip()
             if not cat:
                 continue
+            cat=normalize_category_name(cat)
             try:
                 mn=float(row.get("Costo_Min") if pd.notna(row.get("Costo_Min")) else 0)
                 mx=float(row.get("Costo_Max") if pd.notna(row.get("Costo_Max")) else 999999)
