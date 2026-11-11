@@ -40,5 +40,11 @@ jobs:
           actual = hashlib.sha256(source.encode("utf-8")).hexdigest()
           assert actual == expected, (actual, expected)
           compile(source, "Motech_Price_List_Manager.py", "exec")
+          print("=== SELECT_WINNERS DIAGNOSTIC ===")
+          lines = source.splitlines()
+          for j in range(1515, 1545):
+              if j < len(lines):
+                  print(f"{j+1}: {lines[j]}")
+          print("=== END SELECT_WINNERS DIAGNOSTIC ===")
           print("Validation OK")
           PY
