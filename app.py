@@ -432,14 +432,14 @@ _v2_code = r'''
             "THINKPAD","IDEAPAD","LATITUDE","INSPIRON","VOSTRO","PROBOOK","ELITEBOOK",
             "ZBOOK","PAVILION","ENVY","SPECTRE","OMNIBOOK","VIVOBOOK","ZENBOOK",
             "EXPERTBOOK","ASPIRE","SWIFT","TRAVELMATE","LG GRAM","SURFACE LAPTOP",
-            "DELL PRO ","YOGA","L210MA","L510MA","14-EM","14-DQ","15-FD","15-FC","15S-","255 G","250 G"
+            "DELL PRO ","YOGA","L210MA","L510MA","14-EM","14-EP","14-DQ","14-CF","14S-","15-FD","15-FC","15-DY","15S-","255 G","250 G"
         ]
         if any(t in text for t in laptop_terms):
             return "LAPTOPS"
 
         # 10) Laptop fallback from specs: mobile CPU + RAM + laptop-size screen.
         cpu_mobile=bool(re.search(
-            r"\b(?:INTEL\s+)?(?:N\d{3,4}|N\d{2,3}|CELERON|PENTIUM|CORE\s+(?:ULTRA\s+)?[3579]|I[3579]\s*\-?\s*\d{3,5}[A-Z]{0,2}|"
+            r"\b(?:INTEL\s+)?(?:N\d{2,4}[A-Z]{0,3}|CELERON|PENTIUM|CORE\s+(?:ULTRA\s+)?[3579]|I[3579]\s*\-?\s*\d{3,5}[A-Z]{0,2}|"
             r"RYZEN(?:\s+AI)?\s+[3579]\s*\d{3,5}[A-Z]{0,2}|ATHLON(?:\s+(?:SILVER|GOLD))?\s*\d{3,5}[A-Z]{0,2}|AMD\s+(?:A[469]|E[12])[-\s]?\d{3,4}|SNAPDRAGON\s+X)\b", text))
         ram=bool(re.search(r"\b(?:4|8|12|16|24|32|48|64|96|128)\s*GB\b",text))
         laptop_screen=bool(re.search(r"\b(?:10|11|12|13|14|15|16|17)(?:\.\d)?\s*(?:INCH|INCHES|IN|\"|″)\b",text))
