@@ -153,6 +153,40 @@ def render_margin_config(prefix="margin_cfg"):
     st.markdown("#### Reglas de margen")
     st.caption("Define márgenes automáticos por categoría y rango de costo. El precio o margen manual de un producto siempre tiene prioridad.")
     rules=load_margin_rules()
+
+    canonical_categories=[
+        "LAPTOPS","DESKTOPS","MONITORS","GAMING","MULTIMEDIA",
+        "STORAGE","NETWORKING","ACCESSORIES & OTHERS","REFURBISHED"
+    ]
+    draft=globals().get("winners")
+    coverage_rows=[]
+    for cat in canonical_categories:
+        configured=any(
+            (safe_text(r.get("Categoria")).upper().strip() in {"*","TODAS","TODOS","ALL"}) or
+            (safe_text(r.get("Categoria")).upper().strip()==cat) or
+            (safe_text(r.get("Categoria")).upper().strip() and (
+                safe_text(r.get("Categoria")).upper().strip() in cat or
+                cat in safe_text(r.get("Categoria")).upper().strip()
+            ))
+            for r in rules
+        )
+        total=0
+        missing=0
+        if isinstance(draft,pd.DataFrame) and not draft.empty and "Categoria" in draft.columns:
+            part=draft[draft["Categoria"].astype(str).str.upper()==cat]
+            total=len(part)
+            if "Precio_Publicado" in part.columns:
+                missing=int(part["Precio_Publicado"].isna().sum())
+        coverage_rows.append({
+            "Categoría":cat,
+            "Productos":total,
+            "Regla de margen":"Sí" if configured else "Pendiente",
+            "Sin precio":missing,
+        })
+    st.markdown("##### Cobertura actual")
+    st.dataframe(pd.DataFrame(coverage_rows),use_container_width=True,hide_index=True)
+    st.caption("Las categorías en Pendiente no recibirán precio automático hasta que definas una regla. Los precios manuales siguen teniendo prioridad.")
+
     cols=["Categoria","Costo_Min","Costo_Max","Margen_Pct"]
     df=pd.DataFrame(rules)
     for col in cols:
