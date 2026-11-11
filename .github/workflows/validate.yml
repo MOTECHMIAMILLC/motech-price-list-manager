@@ -40,5 +40,15 @@ jobs:
           actual = hashlib.sha256(source.encode("utf-8")).hexdigest()
           assert actual == expected, (actual, expected)
           compile(source, "Motech_Price_List_Manager.py", "exec")
+          print("=== CATEGORY DIAGNOSTIC ===")
+          lines = source.splitlines()
+          needles = ["def normalize_category", "def classify", "Categoria", "DESKTOPS & PC", "OTROS / VARIOS", "GAMING", "NETWORK", "PRINTER", "STARLINK"]
+          for i,line in enumerate(lines):
+              if any(n.lower() in line.lower() for n in needles):
+                  start=max(0,i-3); end=min(len(lines),i+10)
+                  print(f"--- lines {start+1}-{end} ---")
+                  for j in range(start,end):
+                      print(f"{j+1}: {lines[j]}")
+          print("=== END CATEGORY DIAGNOSTIC ===")
           print("Validation OK")
           PY
